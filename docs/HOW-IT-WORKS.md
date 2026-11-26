@@ -214,6 +214,45 @@ and strips it from the rest — 85 of 792 faces (10.7%) installed on a stock mac
 `block` still refuses flagged faces outright; the safe channel never refuses a glyph, it only
 degrades rendering.
 
+## 4.6 Image guard (sibling bug, same delivery path)
+
+PNGs in a pack are decoded by `stb_image` through `lwjgl-stb` — and 26.3 still ships
+`lwjgl-stb:3.4.3` with no hotfix. Primitive One's write-up describes an out-of-bounds write during the
+16→8-bit conversion (a PNG declaring 23,171² pixels at 16 bits asks for ~4 GiB while the decoder
+allocated 192 KiB) plus an uninitialised-palette read that leaks ASLR-relevant pointers.
+
+`core/ImageGuard` reads the PNG (`IHDR`, `PLTE`) or JPEG (`SOF`) header — never the pixels — and does
+every multiplication in `long`:
+
+| check | default | what it stops |
+| --- | --- | --- |
+| pixels ≤ `m2sfix.images.maxpixels` | 16,777,216 | the published geometry outright |
+| decoded bytes ≤ 64 MiB | fixed | any size that cannot fit |
+| axis ≤ 2^24 | fixed | absurd declared dimensions |
+| 16-bit samples above 1 Mpx | fixed | the exact conversion path that overflows |
+| indexed PNG with a palette < 256 entries | fixed | the uninitialised-palette disclosure |
+
+The hook replaces the buffer argument with an empty one rather than branching, so the injected bytecode
+stays straight-line (`COMPUTE_MAXS`, no invented frame): `stb_image` then fails with "not of any known
+type, or corrupt" and Minecraft renders a missing texture.
+
+Measured on the natives Minecraft 26.3 ships, same 1 MB crafted PNG both times:
+
+```
+java -javaagent:m2sfix-agent.jar      StbProbe crash16.png
+  [m2sfix] agent active (policy=SAFE, images=guarded)
+  [m2sfix] refused image: PNG is 23171x23171 = 536895241 pixels (limit 16777216)
+  returned=NULL ... PROCESS_SURVIVED
+
+java -Dm2sfix.images=off -javaagent:m2sfix-agent.jar StbProbe crash16.png
+  SIGSEGV ... C  [liblwjgl_stb.so+0x11640]malloc(): corrupted top size
+```
+
+A 64×64 RGBA texture still loads normally with the guard on (`returned=buffer w=64 h=64 ch=4`).
+
+Not covered: the palette *leak* (needs decoded pixels) and any decoder bug reachable with a sane
+header.
+
 ## 5. Configuration
 
 System properties (`-D...` on the JVM command line):
@@ -226,6 +265,8 @@ System properties (`-D...` on the JVM command line):
 | `m2sfix.notify` | `true` | in-game warning dialog |
 | `m2sfix.log` | `true` | one stderr line per flagged font |
 | `m2sfix.maxscan` | `64` | how many MiB of a font are scanned; a bigger font is treated as unverifiable (fails closed) |
+| `m2sfix.images` | `safe` | image-header guard for pack textures (`safe` / `off`) |
+| `m2sfix.images.maxpixels` | `16777216` | largest accepted image, in pixels |
 | `m2sfix.sha256.allow` | *(empty)* | comma-separated SHA-256 of fonts to always treat as clean |
 
 ## 6. Verification

@@ -27,6 +27,13 @@ public final class FixTransformer implements ClassFileTransformer {
     static final String TARGET_INTERNAL_NAME = "org/lwjgl/util/freetype/FreeType";
     public static final String TARGET_BINARY_NAME = "org.lwjgl.util.freetype.FreeType";
 
+    /** Second target: the image decoder that resource-pack PNGs go through. */
+    static final String STB_INTERNAL_NAME = "org/lwjgl/stb/STBImage";
+    public static final String STB_BINARY_NAME = "org.lwjgl.stb.STBImage";
+    private static final String STBI_LOAD_MEMORY_DESC =
+            "(Ljava/nio/ByteBuffer;Ljava/nio/IntBuffer;Ljava/nio/IntBuffer;Ljava/nio/IntBuffer;I)"
+            + "Ljava/nio/ByteBuffer;";
+
     private static final String BRIDGE_INTERNAL_NAME = "dev/duckducktw/m2sfix/agent/AgentBridge";
 
     private static final String NEW_FACE_NAME = "FT_New_Memory_Face";
@@ -46,16 +53,22 @@ public final class FixTransformer implements ClassFileTransformer {
             Class<?> classBeingRedefined,
             ProtectionDomain protectionDomain,
             byte[] classfileBuffer) {
-        if (!TARGET_INTERNAL_NAME.equals(className)) {
+        boolean fonts = TARGET_INTERNAL_NAME.equals(className);
+        boolean images = STB_INTERNAL_NAME.equals(className);
+        if (!fonts && !images) {
             return null;
         }
         try {
             ClassReader reader = new ClassReader(classfileBuffer);
             ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
-            reader.accept(new PatchingVisitor(writer), 0);
+            if (fonts) {
+                reader.accept(new PatchingVisitor(writer), 0);
+            } else {
+                reader.accept(new StbVisitor(writer), 0);
+            }
             return writer.toByteArray();
         } catch (Throwable failure) {
-            System.err.println("[m2sfix] Could not install FreeType guard in " + loader + ": " + failure);
+            System.err.println("[m2sfix] Could not install guard in " + loader + ": " + failure);
             return null;
         }
     }
@@ -80,6 +93,44 @@ public final class FixTransformer implements ClassFileTransformer {
                 return new LoadFlagsVisitor(delegate, "adjustCharFlags", 3);
             }
             return delegate;
+        }
+    }
+
+    /** Only the memory-loading entry point; file-based loads never see pack bytes. */
+    private static final class StbVisitor extends ClassVisitor {
+
+        StbVisitor(ClassVisitor delegate) {
+            super(Opcodes.ASM9, delegate);
+        }
+
+        @Override
+        public MethodVisitor visitMethod(
+                int access, String name, String descriptor, String signature, String[] exceptions) {
+            MethodVisitor delegate = super.visitMethod(access, name, descriptor, signature, exceptions);
+            if ("stbi_load_from_memory".equals(name) && STBI_LOAD_MEMORY_DESC.equals(descriptor)) {
+                return new ScreenImageVisitor(delegate);
+            }
+            return delegate;
+        }
+    }
+
+    /**
+     * Inserts {@code image = AgentBridge.screenImage(image)} at method entry. Straight-line code, so
+     * {@code COMPUTE_MAXS} is enough and no stack-map frame has to be invented.
+     */
+    private static final class ScreenImageVisitor extends MethodVisitor {
+
+        ScreenImageVisitor(MethodVisitor delegate) {
+            super(Opcodes.ASM9, delegate);
+        }
+
+        @Override
+        public void visitCode() {
+            super.visitCode();
+            super.visitVarInsn(Opcodes.ALOAD, 0);
+            super.visitMethodInsn(Opcodes.INVOKESTATIC, BRIDGE_INTERNAL_NAME, "screenImage",
+                    "(Ljava/nio/ByteBuffer;)Ljava/nio/ByteBuffer;", false);
+            super.visitVarInsn(Opcodes.ASTORE, 0);
         }
     }
 

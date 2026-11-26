@@ -32,7 +32,8 @@ public final class FixAgent {
                 return;
             }
             exposeBridgeToGameLoaders(instrumentation);
-            System.err.println("[m2sfix] agent active (policy=" + FixPolicy.policy() + ")");
+            System.err.println("[m2sfix] agent active (policy=" + FixPolicy.policy()
+                    + ", images=" + (FixPolicy.imageGuardEnabled() ? "guarded" : "off") + ")");
             FixTransformer transformer = new FixTransformer();
             instrumentation.addTransformer(transformer, true);
             retransformIfAlreadyLoaded(instrumentation);
@@ -69,11 +70,12 @@ public final class FixAgent {
                 return;
             }
             for (Class<?> loaded : instrumentation.getAllLoadedClasses()) {
-                if (FixTransformer.TARGET_BINARY_NAME.equals(loaded.getName())
-                        && instrumentation.isModifiableClass(loaded)) {
+                String name = loaded.getName();
+                boolean fontBinding = FixTransformer.TARGET_BINARY_NAME.equals(name);
+                boolean imageDecoder = FixTransformer.STB_BINARY_NAME.equals(name);
+                if ((fontBinding || imageDecoder) && instrumentation.isModifiableClass(loaded)) {
                     instrumentation.retransformClasses(loaded);
-                    System.err.println("[m2sfix] retransformed already loaded FreeType binding");
-                    return;
+                    System.err.println("[m2sfix] retransformed already loaded " + name);
                 }
             }
         } catch (Throwable throwable) {

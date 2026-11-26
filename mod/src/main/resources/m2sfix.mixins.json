@@ -4,7 +4,8 @@
   "package": "dev.duckducktw.m2sfix.mod.mixin",
   "compatibilityLevel": "JAVA_21",
   "client": [
-    "FreeTypeTargetMixin"
+    "FreeTypeTargetMixin",
+    "StbImageMixin"
   ],
   "injectors": {
     "defaultRequire": 1

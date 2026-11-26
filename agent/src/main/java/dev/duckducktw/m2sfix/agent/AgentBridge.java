@@ -20,6 +20,39 @@ public final class AgentBridge {
     }
 
     /**
+     * Called on entry to {@code STBImage.stbi_load_from_memory}.
+     *
+     * <p>Returns the buffer the decoder should actually see. When the image header cannot possibly
+     * fit (the precondition for the published {@code stb_image} overflow), an empty buffer is
+     * returned instead: the decoder fails normally and Minecraft renders a missing texture. Doing it
+     * this way needs no branch and no stack-map frame in the injected bytecode.</p>
+     *
+     * @param image encoded image bytes as handed to stb_image
+     * @return the original buffer, or an empty one when the image is refused
+     */
+    public static ByteBuffer screenImage(ByteBuffer image) {
+        try {
+            if (image == null) {
+                return null;
+            }
+            if (ImageGuardAdapters.isDisabled()) {
+                return image;
+            }
+            StringBuilder reason = new StringBuilder();
+            if (ImageGuardAdapters.inspect(image, reason)) {
+                ImageGuardAdapters.logRejection(reason.toString());
+                return EMPTY;
+            }
+            return image;
+        } catch (Throwable ignored) {
+            // Never break texture loading because the guard itself misbehaved.
+            return image;
+        }
+    }
+
+    private static final ByteBuffer EMPTY = ByteBuffer.allocateDirect(0);
+
+    /**
      * Called right after a face was created from memory.
      *
      * @param result the value {@code FT_New_Memory_Face} is about to return

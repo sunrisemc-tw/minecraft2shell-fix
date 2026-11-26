@@ -68,9 +68,10 @@ Minecraft 允許伺服器發「資源包」給玩家，裡面可以放字型檔�
 > 字型的程式碼裡組出來，144 個字型裡用任何編碼（ASCII／UTF-16／拆成 4 byte）都找不到
 > `calc.exe`，沒有可靠辦法反推。與其顯示一個猜的，不如不顯示。
 
-### 本工具**不處理**的洞（請一併知道）
+### 同類的圖片解碼洞（已納入防護）
 
-同樣是「伺服器發資源包 → 原生解碼器」的路徑，還有一個同類漏洞，而且**目前沒有修**：
+同一條「伺服器發資源包 → 原生解碼器」路徑上還有一個洞（`stb_image`，PNG 走的解碼器），
+**26.3 用的 `lwjgl-stb 3.4.3` 沒有熱修**：
 
 - 資源包裡的 PNG 會交給 `stb_image`（透過 `lwjgl-stb`）解碼。Primitive One 公開的研究顯示：
   特製 PNG 可以造成原生堆積越界寫（實測必當）、以及「索引色盤未初始化」導致**洩漏原生記憶體
@@ -78,8 +79,14 @@ Minecraft 允許伺服器發「資源包」給玩家，裡面可以放字型檔�
   他們評為 7.1（High），若該伺服器資源包已預先信任則 8.2。
 - 我在 26.3 用的 `lwjgl-stb 3.4.3` 上實測重現了越界寫：餵一個 23,171×23,171 的 16-bit 灰階 PNG
   給 `stbi_load_from_memory(..., 4)`，JVM 直接 SIGSEGV，`malloc(): corrupted top size`。
-- **本工具只掛 FreeType，對這條路徑完全沒有作用。** 想擋這個洞只有兩條路：等 Mojang 換掉
-  `stb_image`，或不要接受陌生伺服器的資源包。
+- **這個洞現在也有防護了**：本工具在 `STBImage.stbi_load_from_memory` 入口檢查圖片的標頭
+  （尺寸、位元深度、色盤），算術一律用 64 位，超出上限就直接把緩衝區換成空的 → 解碼器正常失敗、
+  遊戲顯示缺圖，而不是寫壞原生堆積。實測對照：同一張 23,171×23,171 的 16-bit PNG，
+  掛上本工具 → `refused image … PROCESS_SURVIVED`；`-Dm2sfix.images=off` → `SIGSEGV`。
+- 預設上限：16 Mpx、解碼後 64 MiB、單邊 16,777,216；可用 `-Dm2sfix.images.maxpixels=`
+  與 `-Dm2sfix.images=off` 調整。
+- **仍然不處理**：色盤未初始化的資訊洩漏（那需要看解碼後的像素資料）、以及任何標頭看起來正常
+  卻仍能觸發的解碼器 bug。
 
 ### 支援哪些版本
 
@@ -232,10 +239,10 @@ fonts like this can execute arbitrary code on the client.
 > fonts in any encoding (ASCII, UTF-16, 4-byte split), so there is no reliable way to recover it.
 > Showing a guess would be worse than showing nothing.
 
-### What this tool does **not** cover (also worth knowing)
+### The sibling image-decoder bug (now also guarded)
 
-The same shape — server-supplied pack reaching a native decoder — has a sibling bug that is **still
-open**:
+The same shape — server-supplied pack reaching a native decoder — has a sibling bug in `stb_image`
+(the PNG decoder), and **26.3's `lwjgl-stb 3.4.3` has no hotfix**:
 
 - PNGs in a pack are decoded by `stb_image` (through `lwjgl-stb`). Primitive One's published research
   shows a crafted PNG causing a native heap out-of-bounds write (reliable crash), plus an
@@ -245,8 +252,16 @@ open**:
 - I reproduced the write on the `lwjgl-stb 3.4.3` that 26.3 ships: handing a 23,171×23,171 16-bit
   greyscale PNG to `stbi_load_from_memory(..., 4)` kills the JVM with SIGSEGV,
   `malloc(): corrupted top size`.
-- **This tool hooks FreeType only, so it does nothing for that path.** The only fixes are Mojang
-  replacing `stb_image`, or not accepting packs from servers you do not trust.
+- **This is guarded now too**: the guard inspects the image header at the
+  `STBImage.stbi_load_from_memory` entry point (dimensions, bit depth, palette), does all arithmetic in
+  64-bit, and swaps in an empty buffer when the geometry cannot fit — the decoder then fails normally
+  and the game shows a missing texture instead of corrupting the native heap. Measured side by side
+  with the same 23,171×23,171 16-bit PNG: with the guard → `refused image … PROCESS_SURVIVED`;
+  with `-Dm2sfix.images=off` → `SIGSEGV`.
+- Defaults: 16 Mpx, 64 MiB decoded, 16,777,216 per axis; adjust with
+  `-Dm2sfix.images.maxpixels=`, disable with `-Dm2sfix.images=off`.
+- **Still not covered**: the uninitialised-palette information leak (that needs decoded pixels), and
+  any decoder bug reachable with a perfectly reasonable header.
 
 ### Supported versions
 

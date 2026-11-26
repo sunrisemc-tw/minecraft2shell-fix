@@ -45,6 +45,10 @@ public final class FixPolicy {
     public static final String PROP_SHA256_ALLOW = "m2sfix.sha256.allow";
     public static final String PROP_NOTIFY = "m2sfix.notify";
     public static final String PROP_MAX_SCAN_MIB = "m2sfix.maxscan";
+    /** Image guard: {@code safe} (default) checks decoded geometry, {@code off} disables it. */
+    public static final String PROP_IMAGES = "m2sfix.images";
+    /** Largest accepted image in pixels (default 16 Mpx). */
+    public static final String PROP_IMAGES_MAX_PIXELS = "m2sfix.images.maxpixels";
 
     private static volatile Settings settings = load();
 
@@ -76,6 +80,15 @@ public final class FixPolicy {
         return current().maxScanBytes();
     }
 
+    /** Whether images from packs are checked before the native decoder sees them. */
+    public static boolean imageGuardEnabled() {
+        return current().imageGuardEnabled();
+    }
+
+    public static int imageMaxPixels() {
+        return current().imageMaxPixels();
+    }
+
     /** In-game warning dialog on/off. */
     public static boolean notifyEnabled() {
         return current().notifyEnabled();
@@ -97,8 +110,25 @@ public final class FixPolicy {
         boolean log = parseBoolean(readProperty(PROP_LOG), true);
         boolean notify = parseBoolean(readProperty(PROP_NOTIFY), true);
         int maxScanBytes = parseMaxScanMiB(readProperty(PROP_MAX_SCAN_MIB)) * 1024 * 1024;
+        String imagesValue = readProperty(PROP_IMAGES);
+        boolean imageGuard = imagesValue == null || !"off".equalsIgnoreCase(imagesValue.trim());
+        int imageMaxPixels = parsePositive(readProperty(PROP_IMAGES_MAX_PIXELS),
+                ImageGuard.DEFAULT_MAX_PIXELS);
         Set<String> allowlist = parseAllowlist(readProperty(PROP_SHA256_ALLOW));
-        return new Settings(enabled, policy, unparsable, log, notify, maxScanBytes, allowlist);
+        return new Settings(enabled, policy, unparsable, log, notify, maxScanBytes,
+                imageGuard, imageMaxPixels, allowlist);
+    }
+
+    private static int parsePositive(String raw, int fallback) {
+        if (raw == null || raw.isBlank()) {
+            return fallback;
+        }
+        try {
+            int value = Integer.parseInt(raw.trim());
+            return value < 1 ? fallback : value;
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
     }
 
     private static int parseMaxScanMiB(String raw) {
@@ -178,6 +208,8 @@ public final class FixPolicy {
             boolean logEnabled,
             boolean notifyEnabled,
             int maxScanBytes,
+            boolean imageGuardEnabled,
+            int imageMaxPixels,
             Set<String> sha256Allowlist) {
     }
 }
