@@ -27,7 +27,7 @@
 Minecraft 允許伺服器發「資源包」給玩家，裡面可以放字型檔。有人做出了攻擊：**在字型裡藏一段惡意程式，
 玩家一畫到那個字，電腦就被執行任意程式**（公開示範只是開個小算盤，但同樣可以裝後門）。
 
-問題出在遊戲畫字用的那套繪字引擎，**Minecraft 官方目前還沒修**。
+問題出在遊戲畫字用的那套繪字引擎。**官方已經熱修了，但只修了新版**（詳見下方版本表）：26.2 以後換成自己重打包、內含 FreeType 2.15.0 的 natives；**1.20.5–1.21.10 仍然是舊的 2.13.2，沒有修**。
 
 ### 這個工具做什麼
 
@@ -68,19 +68,35 @@ Minecraft 允許伺服器發「資源包」給玩家，裡面可以放字型檔�
 > 字型的程式碼裡組出來，144 個字型裡用任何編碼（ASCII／UTF-16／拆成 4 byte）都找不到
 > `calc.exe`，沒有可靠辦法反推。與其顯示一個猜的，不如不顯示。
 
+### 本工具**不處理**的洞（請一併知道）
+
+同樣是「伺服器發資源包 → 原生解碼器」的路徑，還有一個同類漏洞，而且**目前沒有修**：
+
+- 資源包裡的 PNG 會交給 `stb_image`（透過 `lwjgl-stb`）解碼。Primitive One 公開的研究顯示：
+  特製 PNG 可以造成原生堆積越界寫（實測必當）、以及「索引色盤未初始化」導致**洩漏原生記憶體
+  （含 ASLR 相關指標）**，再透過可被資源包替換的 shader 以計時側通道回傳給伺服器。
+  他們評為 7.1（High），若該伺服器資源包已預先信任則 8.2。
+- 我在 26.3 用的 `lwjgl-stb 3.4.3` 上實測重現了越界寫：餵一個 23,171×23,171 的 16-bit 灰階 PNG
+  給 `stbi_load_from_memory(..., 4)`，JVM 直接 SIGSEGV，`malloc(): corrupted top size`。
+- **本工具只掛 FreeType，對這條路徑完全沒有作用。** 想擋這個洞只有兩條路：等 Mojang 換掉
+  `stb_image`，或不要接受陌生伺服器的資源包。
+
 ### 支援哪些版本
 
 我直接對 Mojang 的版本清單（Piston meta）與實際的原生函式庫驗證過：
 
-| Minecraft | 內建 FreeType | 有這個漏洞嗎 | 本工具 |
+我把每個版本的原生函式庫抓下來、直接呼叫 `FT_Library_Version` 量版本（不是看版本字串猜）：
+
+| Minecraft | 實際內建的 FreeType | 有這個漏洞嗎 | 本工具 |
 | --- | --- | --- | --- |
-| 26.3 / 26.4 快照 | 2.14.3（LWJGL 3.4.3） | 有 | ✅ |
-| 26.1 – 26.2 | 2.14.1（LWJGL 3.4.1） | 有 | ✅ |
-| 1.20.5 – 1.21.10 | 2.13.2（LWJGL 3.3.3） | 有 | ✅ |
+| 26.2 | **2.15.0**（`3.4.1-mojang-2.15.0.3`） | 已熱修 | 多餘（仍可當縱深防禦） |
+| 26.3 / 26.4 快照 / 26.4-pre-1 | **2.15.0**（`3.4.3-mojang-2.15.0`） | 已熱修 | 多餘（仍可當縱深防禦） |
+| 1.20.5 – 1.21.10 | **2.13.2**（`3.3.3`，無熱修） | **有** | ✅ 需要 |
 | 1.20.4 及更早 | 沒有用 FreeType（走 stb_truetype） | 不是同一個洞 | ⛔ 不適用 |
 
-- FreeType 的 `Ins_SHZ` 修補是 2026 年 4 月進上游、隨 **2.15.0**（2026-10）釋出；上面三個版本樹全都早於它。
-- 最新正式版 26.3 與最新快照 26.4-snapshot-10 **都還是 lwjgl-freetype 3.4.3**，所以官方還沒修。
+- **官方是用「同名重新打包」修的**：版本號還寫 `3.4.3`，但 artifacts 是 `3.4.3-mojang-2.15.0`，裡面真的是 FreeType 2.15.0。所以「版本號看起來沒變」不代表沒修 —— 這也是我先前判斷錯的地方。
+- 啟動器只要有重新抓 Mojang 的 library 清單，就會自動拿到修好的 natives；**會壞的是那些把 library 快取住、或整包 pin 在舊 natives 的整合包／離線安裝**。
+- 1.20.5–1.21.10 完全沒有熱修，這是本工具目前最實際的用途。
 - 1.20.4 以前的客戶端根本沒呼叫 FreeType，本工具掛上去也不會被觸發（不會壞，但也沒作用）。
 - 舊版（1.20.5–1.21.x）跑的是 Java 21，本工具就是編 Java 21，可以直接用。
 
@@ -216,6 +232,22 @@ fonts like this can execute arbitrary code on the client.
 > fonts in any encoding (ASCII, UTF-16, 4-byte split), so there is no reliable way to recover it.
 > Showing a guess would be worse than showing nothing.
 
+### What this tool does **not** cover (also worth knowing)
+
+The same shape — server-supplied pack reaching a native decoder — has a sibling bug that is **still
+open**:
+
+- PNGs in a pack are decoded by `stb_image` (through `lwjgl-stb`). Primitive One's published research
+  shows a crafted PNG causing a native heap out-of-bounds write (reliable crash), plus an
+  uninitialised-palette read that **discloses native memory (ASLR-relevant pointers)** and a
+  timing side channel through a pack-supplied shader to send it back. They rate it 7.1 High
+  (8.2 if the server's pack was already trusted).
+- I reproduced the write on the `lwjgl-stb 3.4.3` that 26.3 ships: handing a 23,171×23,171 16-bit
+  greyscale PNG to `stbi_load_from_memory(..., 4)` kills the JVM with SIGSEGV,
+  `malloc(): corrupted top size`.
+- **This tool hooks FreeType only, so it does nothing for that path.** The only fixes are Mojang
+  replacing `stb_image`, or not accepting packs from servers you do not trust.
+
 ### Supported versions
 
 Checked against Mojang's own version manifest (Piston meta) and the actual native libraries:
@@ -227,10 +259,13 @@ Checked against Mojang's own version manifest (Piston meta) and the actual nativ
 | 1.20.5 – 1.21.10 | 2.13.2 (LWJGL 3.3.3) | yes | ✅ |
 | 1.20.4 and older | no FreeType (stb_truetype) | a different bug | ⛔ not applicable |
 
-- The `Ins_SHZ` fix landed upstream in April 2026 and shipped in **2.15.0** (2026-10); every version
-  tree above predates it.
-- The latest release (26.3) and the latest snapshot (26.4-snapshot-10) still ship
-  `lwjgl-freetype 3.4.3` — Mojang has not shipped the fix yet.
+- Mojang **has** patched it, by republishing the same version number with a suffix: the artifacts are
+  `lwjgl-freetype-3.4.3-mojang-2.15.0` (26.3, 26.4 snapshots, 26.4-pre-1) and
+  `3.4.1-mojang-2.15.0.3` (26.2). I downloaded those natives and printed `FT_Library_Version`: both
+  report **2.15.0**, the fixed release. The version *number* looking unchanged does not mean it is
+  unfixed — I got that wrong once, which is why the table above is measured rather than grepped.
+- 1.20.5 – 1.21.10 ship plain `lwjgl-stb`/`lwjgl-freetype 3.3.3` = FreeType **2.13.2**, with no
+  hotfix, so those are the versions this tool is actually for.
 - Before 1.20.5 the client never calls FreeType, so the hooks are never reached (harmless, but no
   effect either).
 - 1.20.5 – 1.21.x run Java 21, which is what this project targets, so they work as-is.
