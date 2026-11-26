@@ -82,9 +82,13 @@ Minecraft 允許伺服器發「資源包」給玩家，裡面可以放字型檔�
 - 根因是上游 stb 的 `stbi__convert_format16`：`req_comp * x * y * 2` 用 32 位整數相乘會溢位（8-bit 版本
   有 `stbi__malloc_mad3` 檢查，16-bit 沒有）。回報在 nothings/stb #1932 / #1935 / #1936，
   **到 2026-10 仍未有上游修補**。
-- **RCE 沒有被證實。** 研究員自己寫明「未示範任意寫入、控制指令指標或程式執行」；我這裡也沒有。
-  已證實的是**可靠的遠端 DoS（必定當機）＋ 原生記憶體洩漏（ASLR 指標）＋ 伺服器端可讀取的側通道**，
-  這些是 RCE 的前置條件，不是 RCE 本身。
+- **RCE 沒有被證實，而且我實測後認為這條 primitive 走不到 RCE。** 我做了量測：把弱點配置放在
+  guard page 前面，寫入在 196,608 bytes（buffer 滿 + 4 KiB）就撞上 guard 停住，內容確實可控
+  （`42 41 42 41 42 41 ff ff` 重複 = 我們的像素值 ×3 + 固定 alpha），但**迴圈還剩 4.00 GiB 要寫**。
+  觸發條件本身就要求真實寫入量 ≥ 2³² bytes，所以寫入永遠不可能完成；而迴圈中間沒有執行任何程式碼，
+  被改壞的物件沒有機會在被用之前生效。結論：**遠端必當的 DoS ＋ 資訊洩漏，不是 RCE**。
+  完整分析在 [docs/SECURITY-REPORT-stb-image.md](docs/SECURITY-REPORT-stb-image.md)（供私下通報廠商，
+  不含任何 PoC）。
 - **這個洞現在也有防護了**：本工具在 `STBImage.stbi_load_from_memory` 入口檢查圖片的標頭
   （尺寸、位元深度、色盤），算術一律用 64 位，超出上限就直接把緩衝區換成空的 → 解碼器正常失敗、
   遊戲顯示缺圖，而不是寫壞原生堆積。實測對照：同一張 23,171×23,171 的 16-bit PNG，
@@ -261,10 +265,14 @@ The same shape — server-supplied pack reaching a native decoder — has a sibl
 - Root cause is upstream: `stbi__convert_format16` multiplies `req_comp * x * y * 2` in 32-bit and
   wraps (the 8-bit path uses `stbi__malloc_mad3` and checks). Reported in nothings/stb #1932 / #1935 /
   #1936 and **still unfixed upstream as of 2026-10**.
-- **RCE is not demonstrated.** The researchers say so explicitly ("what was not demonstrated is an
-  arbitrary write, control of the instruction pointer, or code execution"), and neither have I. What is
-  demonstrated: a reliable remote crash, native memory disclosure (ASLR-relevant pointers) and a
-  server-side timing channel to read it — the prerequisites for exploitation, not exploitation.
+- **RCE is not demonstrated, and my measurements say this primitive cannot reach it.** With the
+  vulnerable allocation placed in front of a guard page, the write stops after 196,608 bytes (buffer
+  full plus 4 KiB) and the content is attacker-chosen (`42 41 42 41 42 41 ff ff` repeating = our pixel
+  value ×3 plus a fixed alpha) — but the loop **still had 4.00 GiB left to write**. Triggering the bug
+  means the true write size is ≥ 2³² bytes, so the write can never complete, and nothing executes
+  between the writes for corrupted state to be used. Verdict: reliable remote DoS plus information
+  disclosure, not RCE. Full analysis in
+  [docs/SECURITY-REPORT-stb-image.md](docs/SECURITY-REPORT-stb-image.md) (vendor disclosure, no PoC).
 - **This is guarded now too**: the guard inspects the image header at the
   `STBImage.stbi_load_from_memory` entry point (dimensions, bit depth, palette), does all arithmetic in
   64-bit, and swaps in an empty buffer when the geometry cannot fit — the decoder then fails normally
