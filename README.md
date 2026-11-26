@@ -79,6 +79,12 @@ Minecraft 允許伺服器發「資源包」給玩家，裡面可以放字型檔�
   他們評為 7.1（High），若該伺服器資源包已預先信任則 8.2。
 - 我在 26.3 用的 `lwjgl-stb 3.4.3` 上實測重現了越界寫：餵一個 23,171×23,171 的 16-bit 灰階 PNG
   給 `stbi_load_from_memory(..., 4)`，JVM 直接 SIGSEGV，`malloc(): corrupted top size`。
+- 根因是上游 stb 的 `stbi__convert_format16`：`req_comp * x * y * 2` 用 32 位整數相乘會溢位（8-bit 版本
+  有 `stbi__malloc_mad3` 檢查，16-bit 沒有）。回報在 nothings/stb #1932 / #1935 / #1936，
+  **到 2026-10 仍未有上游修補**。
+- **RCE 沒有被證實。** 研究員自己寫明「未示範任意寫入、控制指令指標或程式執行」；我這裡也沒有。
+  已證實的是**可靠的遠端 DoS（必定當機）＋ 原生記憶體洩漏（ASLR 指標）＋ 伺服器端可讀取的側通道**，
+  這些是 RCE 的前置條件，不是 RCE 本身。
 - **這個洞現在也有防護了**：本工具在 `STBImage.stbi_load_from_memory` 入口檢查圖片的標頭
   （尺寸、位元深度、色盤），算術一律用 64 位，超出上限就直接把緩衝區換成空的 → 解碼器正常失敗、
   遊戲顯示缺圖，而不是寫壞原生堆積。實測對照：同一張 23,171×23,171 的 16-bit PNG，
@@ -252,6 +258,13 @@ The same shape — server-supplied pack reaching a native decoder — has a sibl
 - I reproduced the write on the `lwjgl-stb 3.4.3` that 26.3 ships: handing a 23,171×23,171 16-bit
   greyscale PNG to `stbi_load_from_memory(..., 4)` kills the JVM with SIGSEGV,
   `malloc(): corrupted top size`.
+- Root cause is upstream: `stbi__convert_format16` multiplies `req_comp * x * y * 2` in 32-bit and
+  wraps (the 8-bit path uses `stbi__malloc_mad3` and checks). Reported in nothings/stb #1932 / #1935 /
+  #1936 and **still unfixed upstream as of 2026-10**.
+- **RCE is not demonstrated.** The researchers say so explicitly ("what was not demonstrated is an
+  arbitrary write, control of the instruction pointer, or code execution"), and neither have I. What is
+  demonstrated: a reliable remote crash, native memory disclosure (ASLR-relevant pointers) and a
+  server-side timing channel to read it — the prerequisites for exploitation, not exploitation.
 - **This is guarded now too**: the guard inspects the image header at the
   `STBImage.stbi_load_from_memory` entry point (dimensions, bit depth, palette), does all arithmetic in
   64-bit, and swaps in an empty buffer when the geometry cannot fit — the decoder then fails normally
