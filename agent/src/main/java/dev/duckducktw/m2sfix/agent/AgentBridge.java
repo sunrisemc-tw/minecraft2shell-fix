@@ -1,7 +1,6 @@
 package dev.duckducktw.m2sfix.agent;
 
 import dev.duckducktw.m2sfix.core.FaceGuard;
-import dev.duckducktw.m2sfix.core.FixPolicy;
 import java.nio.ByteBuffer;
 
 /**
@@ -16,29 +15,25 @@ public final class AgentBridge {
     private AgentBridge() {
     }
 
+    public static int beforeNewFace(ByteBuffer file) {
+        return FaceGuard.beforeNewFace(file);
+    }
+
     /**
      * Called right after a face was created from memory.
      *
      * @param result the value {@code FT_New_Memory_Face} is about to return
-     * @return the possibly rewritten return value
+     * @return the original FreeType result
      */
-    public static int afterNewFace(ByteBuffer file, long fileSizeHint, Object facePointerBuffer, int result) {
+    public static int afterNewFace(ByteBuffer file, Object facePointerBuffer, int result) {
         try {
-            if (result != 0) {
-                return result;
+            if (result == 0) {
+                FaceGuard.afterNewFace(readPointer(facePointerBuffer), file);
             }
-            long address = readPointer(facePointerBuffer);
-            // LWJGL's four-argument overload passes the *face index* in the slot
-            // named file_size, so the buffer itself is the only reliable size.
-            long size = file == null ? fileSizeHint : file.remaining();
-            boolean flagged = FaceGuard.inspectNewFace(address, file, size);
-            if (flagged && FixPolicy.policy() == FixPolicy.Policy.BLOCK) {
-                return FaceGuard.FT_ERR_INVALID_FILE_FORMAT;
-            }
-            return result;
         } catch (Throwable ignored) {
-            return result;
+            // Keep the native result on guard failure.
         }
+        return result;
     }
 
     /**
@@ -49,11 +44,15 @@ public final class AgentBridge {
      */
     public static int adjustFlags(Object face, int flags) {
         try {
-            long address = readAddress(face);
-            if (address == 0L) {
-                return flags;
-            }
-            return FaceGuard.adjustLoadFlags(address, flags);
+            return FaceGuard.adjustLoadFlags(readAddress(face), flags);
+        } catch (Throwable ignored) {
+            return flags;
+        }
+    }
+
+    public static int adjustCharFlags(Object face, int flags) {
+        try {
+            return FaceGuard.adjustCharLoadFlags(readAddress(face), flags);
         } catch (Throwable ignored) {
             return flags;
         }
@@ -76,7 +75,9 @@ public final class AgentBridge {
             return 0L;
         }
         try {
-            Object value = pointerBuffer.getClass().getMethod("get", int.class).invoke(pointerBuffer, 0);
+            Class<?> type = pointerBuffer.getClass();
+            int position = (int) type.getMethod("position").invoke(pointerBuffer);
+            Object value = type.getMethod("get", int.class).invoke(pointerBuffer, position);
             return value instanceof Number number ? number.longValue() : 0L;
         } catch (Throwable ignored) {
             return 0L;

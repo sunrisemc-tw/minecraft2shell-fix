@@ -6,7 +6,7 @@
 
   <groupId>dev.duckducktw.m2sfix</groupId>
   <artifactId>m2sfix-parent</artifactId>
-  <version>1.0.0</version>
+  <version>2.2.0</version>
   <packaging>pom</packaging>
 
   <name>minecraft2shell-fix</name>

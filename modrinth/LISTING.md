@@ -55,8 +55,8 @@ FontGuard 的做法是：**所有字型載入時都不執行 hinting**。攻擊�
 
 ![hinting comparison](https://raw.githubusercontent.com/sunrisemc-tw/minecraft2shell-fix/main/docs/images/hinting-comparison.png)
 
-如果你覺得小字糊到受不了，可以在 JVM 參數加 `-Dm2sfix.policy=detect`：只處理被判定為惡意的
-字型，其他保持原樣（代價是回到「只擋已知變種」）。
+如果你覺得小字糊到受不了，可以在 JVM 參數加 `-Dm2sfix.policy=detect`：只有可能執行到
+出問題那條指令（SHZ）的字型才關 hinting，其他保持原樣（約 11% 的一般字型也會被降級）。
 
 ### 什麼時候會跳警告
 
@@ -118,29 +118,29 @@ Modrinth treats each loader separately, so publish **two versions from the same 
 
 ### Version 1 — Fabric
 
-- **Name:** `2.1.0 (Fabric)`
-- **Version number:** `2.1.0`
+- **Name:** `2.2.0 (Fabric)`
+- **Version number:** `2.2.0`
 - **Release channel:** Release
 - **Loaders:** Fabric
 - **Game versions:** 1.20.5, 1.20.6, 1.21, 1.21.1, 1.21.2, 1.21.3, 1.21.4, 1.21.5, 1.21.6, 1.21.7,
   1.21.8, 1.21.9, 1.21.10, 26.1, 26.2, 26.3, 26.4-snapshot-1 … 26.4-snapshot-10
-- **File:** `m2sfix-mod-1.0.0.jar`
+- **File:** `m2sfix-mod-2.2.0.jar`
 - **Dependencies:** none
 
 ### Version 2 — Forge / NeoForge
 
-- **Name:** `2.1.0 (Forge / NeoForge)`
-- **Version number:** `2.1.0`
+- **Name:** `2.2.0 (Forge / NeoForge)`
+- **Version number:** `2.2.0`
 - **Release channel:** Release
 - **Loaders:** Forge, NeoForge
 - **Game versions:** same list as above
-- **File:** the same `m2sfix-mod-1.0.0.jar` (it carries `mods.toml` + the `MixinConfigs` manifest
-  entry alongside `fabric.mod.json`)
+- **File:** the same `m2sfix-mod-2.2.0.jar` (it carries `mods.toml`, `neoforge.mods.toml` and the
+  `MixinConfigs` manifest entry alongside `fabric.mod.json`)
 - **Dependencies:** none
 
-> Honest note to keep in the changelog field: the Forge/NeoForge path has **not** been loaded inside a
-> real Forge/NeoForge instance yet. If a loader rejects a mod without a `@Mod` class, tell users to use
-> the javaagent from the GitHub release instead.
+> Tested in real clients on macOS: Forge 1.20.6 / 1.21.10, NeoForge 1.20.5 / 1.20.6 / 1.21.10 / 26.3
+> (see `docs/LOADERS.md`). On Forge/NeoForge the mod covers Minecraft's own FreeType calls; users of
+> other mods that call FreeType should use the javaagent from the GitHub release.
 
 ### Changelog field (both versions)
 

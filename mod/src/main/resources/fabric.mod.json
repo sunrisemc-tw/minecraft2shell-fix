@@ -9,6 +9,11 @@
   ],
   "license": "MIT",
   "environment": "client",
+  "entrypoints": {
+    "client": [
+      "dev.duckducktw.m2sfix.mod.FreeTypeHooks::verifyFabricHook"
+    ]
+  },
   "mixins": [
     "m2sfix.mixins.json"
   ],

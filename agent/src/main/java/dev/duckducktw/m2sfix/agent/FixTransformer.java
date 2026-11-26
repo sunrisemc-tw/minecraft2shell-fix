@@ -5,30 +5,27 @@ import java.security.ProtectionDomain;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 
 /**
- * Splices two small calls into {@code org.lwjgl.util.freetype.FreeType}.
+ * Adds a face check and load flag adjustments to {@code org.lwjgl.util.freetype.FreeType}.
  *
  * <pre>
- * FT_Load_Glyph(face, index, flags):
- *     flags = AgentBridge.adjustFlags(face, flags);     // entry
+ * FT_Load_Glyph and FT_Load_Char:
+ *     flags = AgentBridge.adjustFlags(face, flags); // entry
  *
- * FT_New_Memory_Face(library, file, size, aface):
- *     return AgentBridge.afterNewFace(file, size, aface, result);   // before every return
+ * FT_New_Memory_Face(library, file, faceIndex, aface):
+ *     return the guard's error when it rejects the font before the native call;
+ *     otherwise call AgentBridge.afterNewFace(file, aface, result) before returning.
  * </pre>
  *
- * <p>Raw ASM is used on purpose: both hooks are three instructions of straight
- * line code, and this keeps the agent free of any instrumentation framework
- * that could disagree with a particular JVM/Minecraft combination. The injected
- * code contains no jumps, so existing stack map frames stay valid and only
- * {@code maxStack}/{@code maxLocals} have to be recomputed.</p>
  */
-final class FixTransformer implements ClassFileTransformer {
+public final class FixTransformer implements ClassFileTransformer {
 
     static final String TARGET_INTERNAL_NAME = "org/lwjgl/util/freetype/FreeType";
-    static final String TARGET_BINARY_NAME = "org.lwjgl.util.freetype.FreeType";
+    public static final String TARGET_BINARY_NAME = "org.lwjgl.util.freetype.FreeType";
 
     private static final String BRIDGE_INTERNAL_NAME = "dev/duckducktw/m2sfix/agent/AgentBridge";
 
@@ -37,6 +34,7 @@ final class FixTransformer implements ClassFileTransformer {
             "(JLjava/nio/ByteBuffer;JLorg/lwjgl/PointerBuffer;)I";
     private static final String LOAD_GLYPH_NAME = "FT_Load_Glyph";
     private static final String LOAD_GLYPH_DESC = "(Lorg/lwjgl/util/freetype/FT_Face;II)I";
+    private static final String LOAD_CHAR_DESC = "(Lorg/lwjgl/util/freetype/FT_Face;JI)I";
 
     /** A free slot above the parameters of {@code FT_New_Memory_Face} (locals 0..5 are used). */
     private static final int NEW_FACE_TEMP_LOCAL = 6;
@@ -56,8 +54,8 @@ final class FixTransformer implements ClassFileTransformer {
             ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
             reader.accept(new PatchingVisitor(writer), 0);
             return writer.toByteArray();
-        } catch (Throwable ignored) {
-            // Never break the class: fall back to the original bytes.
+        } catch (Throwable failure) {
+            System.err.println("[m2sfix] Could not install FreeType guard in " + loader + ": " + failure);
             return null;
         }
     }
@@ -76,37 +74,39 @@ final class FixTransformer implements ClassFileTransformer {
                 return new NewFaceVisitor(delegate);
             }
             if (LOAD_GLYPH_NAME.equals(name) && LOAD_GLYPH_DESC.equals(descriptor)) {
-                return new LoadGlyphVisitor(delegate);
+                return new LoadFlagsVisitor(delegate, "adjustFlags", 2);
+            }
+            if ("FT_Load_Char".equals(name) && LOAD_CHAR_DESC.equals(descriptor)) {
+                return new LoadFlagsVisitor(delegate, "adjustCharFlags", 3);
             }
             return delegate;
         }
     }
 
     /** Inserts {@code flags = AgentBridge.adjustFlags(face, flags)} at method entry. */
-    private static final class LoadGlyphVisitor extends MethodVisitor {
+    private static final class LoadFlagsVisitor extends MethodVisitor {
 
-        private boolean injected;
+        private final String hook;
+        private final int flagsSlot;
 
-        LoadGlyphVisitor(MethodVisitor delegate) {
+        LoadFlagsVisitor(MethodVisitor delegate, String hook, int flagsSlot) {
             super(Opcodes.ASM9, delegate);
+            this.hook = hook;
+            this.flagsSlot = flagsSlot;
         }
 
         @Override
         public void visitCode() {
             super.visitCode();
-            if (injected) {
-                return;
-            }
-            injected = true;
             super.visitVarInsn(Opcodes.ALOAD, 0);
-            super.visitVarInsn(Opcodes.ILOAD, 2);
+            super.visitVarInsn(Opcodes.ILOAD, flagsSlot);
             super.visitMethodInsn(
                     Opcodes.INVOKESTATIC,
                     BRIDGE_INTERNAL_NAME,
-                    "adjustFlags",
+                    hook,
                     "(Ljava/lang/Object;I)I",
                     false);
-            super.visitVarInsn(Opcodes.ISTORE, 2);
+            super.visitVarInsn(Opcodes.ISTORE, flagsSlot);
         }
     }
 
@@ -118,18 +118,32 @@ final class FixTransformer implements ClassFileTransformer {
         }
 
         @Override
+        public void visitCode() {
+            super.visitCode();
+            Label proceed = new Label();
+            super.visitVarInsn(Opcodes.ALOAD, 2);
+            super.visitMethodInsn(Opcodes.INVOKESTATIC, BRIDGE_INTERNAL_NAME, "beforeNewFace",
+                    "(Ljava/nio/ByteBuffer;)I", false);
+            super.visitInsn(Opcodes.DUP);
+            super.visitJumpInsn(Opcodes.IFEQ, proceed);
+            super.visitInsn(Opcodes.IRETURN);
+            super.visitLabel(proceed);
+            super.visitFrame(Opcodes.F_SAME1, 0, null, 1, new Object[]{Opcodes.INTEGER});
+            super.visitInsn(Opcodes.POP);
+        }
+
+        @Override
         public void visitInsn(int opcode) {
             if (opcode == Opcodes.IRETURN) {
                 super.visitVarInsn(Opcodes.ISTORE, NEW_FACE_TEMP_LOCAL);
                 super.visitVarInsn(Opcodes.ALOAD, 2); // file
-                super.visitVarInsn(Opcodes.LLOAD, 3); // file_size
                 super.visitVarInsn(Opcodes.ALOAD, 5); // aface
                 super.visitVarInsn(Opcodes.ILOAD, NEW_FACE_TEMP_LOCAL);
                 super.visitMethodInsn(
                         Opcodes.INVOKESTATIC,
                         BRIDGE_INTERNAL_NAME,
                         "afterNewFace",
-                        "(Ljava/nio/ByteBuffer;JLjava/lang/Object;I)I",
+                        "(Ljava/nio/ByteBuffer;Ljava/lang/Object;I)I",
                         false);
             }
             super.visitInsn(opcode);

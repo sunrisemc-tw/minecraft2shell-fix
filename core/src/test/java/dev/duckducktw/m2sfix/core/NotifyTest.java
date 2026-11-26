@@ -68,6 +68,7 @@ class NotifyTest {
         ((ConfirmScreen) client.currentScreen).callback.accept(true);
 
         assertFalse(client.disconnectCalled);
+        assertEquals(null, client.currentScreen);
     }
 
     @Test
@@ -101,6 +102,18 @@ class NotifyTest {
         client.reset();
         FaceGuard.inspectNewFace(0x5678L, java.nio.ByteBuffer.wrap(hostile), hostile.length);
         assertEquals(null, client.currentScreen, "the same font must not warn twice");
+    }
+
+    @Test
+    void aRiskyShzFontDoesNotTriggerTheWarningDialog() throws Exception {
+        System.setProperty(FixPolicy.PROP_POLICY, "detect");
+        FaceGuard.clearForTests();
+        byte[] risky = TestFonts.read(TestFonts.SHZ_IN_GLYPH);
+
+        boolean degraded = FaceGuard.inspectNewFace(0x9999L, java.nio.ByteBuffer.wrap(risky), risky.length);
+
+        assertTrue(degraded, "detect mode must strip hinting from RISKY SHZ faces");
+        assertEquals(null, client.currentScreen, "RISKY faces must not trigger the malicious-pack dialog");
     }
 
 }

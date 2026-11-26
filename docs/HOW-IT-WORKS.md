@@ -3,7 +3,7 @@
 This is the technical companion to the README. The README is written for players; everything a mod
 author or anyone auditing the mitigation needs is here.
 
-> **Status: not verified against a live Minecraft client.** See [Verification](#verification) for
+> **Status: hooks verified in live clients on macOS; the exploit itself was never run against it.** See [Verification](#verification) for
 > exactly what was run.
 >
 > The published exploit traced step by step (delivery → trigger → font internals → the `Ins_SHZ`
@@ -33,12 +33,19 @@ points Minecraft actually uses (verified with `javap` on the Mojang-signed 26.3 
 | Minecraft call site | LWJGL method | what the hook does |
 | --- | --- | --- |
 | `net.minecraft.client.gui.font.providers.TrueTypeGlyphProviderDefinition.load(ResourceManager)` | `FreeType.FT_New_Memory_Face(long, ByteBuffer, long, PointerBuffer)` | lint the font bytes once, remember the verdict for that `FT_Face` address |
-| `com.mojang.blaze3d.font.TrueTypeGlyphProvider.loadGlyph(int, FT_Face, int)` | `FreeType.FT_Load_Glyph(FT_Face, int, int)` | add `FT_LOAD_NO_HINTING` (0x2) **only for flagged faces** |
+| `com.mojang.blaze3d.font.TrueTypeGlyphProvider.loadGlyph(int, FT_Face, int)` and `com.mojang.blaze3d.platform.NativeImage` | `FreeType.FT_Load_Glyph(FT_Face, int, int)` | OR in `FT_LOAD_NO_HINTING \| FT_LOAD_NO_AUTOHINT` (`0x8002`) — every face under `safe`, flagged faces under `detect` |
 
 Every glyph-program execution path in `ttgload.c` is gated by `IS_HINTED(load_flags)` — the simple
-glyph path, the composite path, the recursive component path. A face loaded with `FT_LOAD_NO_HINTING`
-therefore never runs the interpreter, so there is no `SHZ` execution and no `IDEF` recovery program.
-Unflagged faces keep the caller's flags untouched: their rendering is bit-for-bit identical.
+glyph path, the composite path, the recursive component path — and so are `fpgm`/`prep`, which only
+run from inside the same block of `tt_loader_init`. A face loaded without hinting therefore never runs
+the interpreter, so there is no `SHZ` execution and no `IDEF` recovery program.
+
+**Why `0x8002` and not just `0x2`.** For some faces `tt_glyph_load` (ttdriver.c) ignores
+`FT_LOAD_NO_HINTING` unless `FT_LOAD_NO_AUTOHINT` is also set, so 2.2.0 always sets both. A full
+write-up follows once upstream has shipped the same change.
+
+All three hooks also log `[m2sfix] guard active: <hook> intercepted (policy=…)` the first time they
+fire, so a hook that never applied shows up as a missing line rather than as silence.
 
 ### 2.1 The agent
 
@@ -47,12 +54,19 @@ straight-line sequences, so existing stack-map frames stay valid and only `maxSt
 recomputed:
 
 ```
-FT_Load_Glyph(face, index, flags):            // method entry
+FT_Load_Glyph / FT_Load_Char(face, …, flags):     // method entry
     flags = AgentBridge.adjustFlags(face, flags)
 
-FT_New_Memory_Face(lib, file, size, aface):   // before every IRETURN
-    return AgentBridge.afterNewFace(file, size, aface, result)
+FT_New_Memory_Face(lib, file, faceIndex, aface):
+    r = AgentBridge.beforeNewFace(file); if (r != 0) return r   // entry: block policy, no native call
+    …
+    return AgentBridge.afterNewFace(file, aface, result)        // before every IRETURN
 ```
+
+At `premain` the agent appends itself and a small embedded `AgentBridge` jar to the bootstrap class
+path. Fabric's Knot loader defines `FreeType` and refuses to delegate to classes it finds in the
+outer agent jar, so the bridge lives only in the embedded jar; this was the difference between a
+`NoClassDefFoundError` and a working guard in a live Fabric client.
 
 `AgentBridge` is the only class that touches `FaceGuard`; it resolves the face address and the
 `PointerBuffer` entry by reflection, so the injected code never links against LWJGL types. Any
@@ -65,11 +79,22 @@ nothing. See `docs/IMPLEMENTATION-NOTES.md` for the bisect.
 
 ### 2.2 The mod
 
-`FreeTypeTargetMixin` uses `@Mixin(targets = "org.lwjgl.util.freetype.FreeType", remap = false)`:
-`@Inject(at = @At("RETURN"))` on `FT_New_Memory_Face` and `@ModifyVariable(index = 2)` on
-`FT_Load_Glyph`. Because the target is a library class there is nothing to remap, so no refmap and no
-Minecraft compile dependency; the same jar carries `fabric.mod.json`, `META-INF/mods.toml` and the
-`MixinConfigs` manifest attribute.
+One jar, two hook strategies, because the loaders put LWJGL in different places:
+
+- **Fabric** loads LWJGL through Knot, which Mixin can transform, so `FreeTypeTargetMixin` patches
+  `org.lwjgl.util.freetype.FreeType` itself (`FT_New_Memory_Face` HEAD + RETURN, `FT_Load_Glyph` and
+  `FT_Load_Char` flags). A client entrypoint checks for an injected marker method and stops startup if
+  the mixin did not apply.
+- **Forge / NeoForge** load LWJGL in a layer Mixin cannot transform. `MinecraftFontHookPlugin`
+  instead rewrites the `INVOKESTATIC FreeType.FT_*` instructions in Minecraft's own callers
+  (`TrueTypeGlyphProviderDefinition`, `TrueTypeGlyphProvider`, `NativeImage`) to `FreeTypeHooks`,
+  matching on the LWJGL descriptor so caller method names do not matter. A missing target or a target
+  with no matching call stops startup with a message pointing to `-javaagent`. Third-party mods that
+  call FreeType directly are not covered on these loaders; the agent covers them.
+
+Metadata: `fabric.mod.json`, `META-INF/mods.toml` (Forge, `lowcodefml`) and
+`META-INF/neoforge.mods.toml` (NeoForge 1.20.5+, with a `[[mixins]]` block). Loader-by-loader test
+results are in [LOADERS.md](LOADERS.md).
 
 ### 2.3 A trap worth knowing
 
@@ -90,10 +115,12 @@ from `ByteBuffer.remaining()`.
 - The instruction decoder handles the variable-length pushes (`PUSHB`/`PUSHW`/`NPUSHB`/`NPUSHW`) and
   takes `FDEF`/`IDEF` definition numbers from the preceding push, as FreeType's `args[0]` does. Payload bytes are
   never interpreted as opcodes — there is a regression fixture for that (`pushb-decoy.ttf`).
-- Verdict: `IDEF` that redefines a **point-zone** instruction (`MDAP`, `IUP`, `SHP`, `SHC`, `SHZ`,
-  `SHPIX`, `IP`, `MSIRP`, `ALIGNRP`, `MIAP`) ⇒ `SUSPICIOUS`; `IDEF` in a glyph program (illegal
-  there) ⇒ `SUSPICIOUS`; any other `IDEF` ⇒ `CLEAN` and the defined opcodes are reported in the reason;
-  no `IDEF` ⇒ `CLEAN` (with an `SHZ` count); unusable structure ⇒ `UNPARSABLE` (suspicious by default).
+- Verdicts, strongest first: `SUSPICIOUS` = the published exploit's shape (`IDEF` redefining a
+  point-zone instruction, or `IDEF` in a glyph program) — warning dialog, rejected under `block`;
+  `RISKY` = the bytecode could execute `SHZ` (`0x36`/`0x37`) at all, or defines an `IDEF` whose opcode
+  cannot be read statically — loses hinting under `detect`, no dialog; `UNPARSABLE` = fails closed;
+  `CLEAN`. The completeness argument for `RISKY` (linear decode plus jump targets inside push data),
+  its FreeType source references and the false-positive count are in [DETECT-MODE.md](DETECT-MODE.md).
 - The definition number of `IDEF`/`FDEF` is read from the value pushed immediately before it, exactly
   like FreeType's `args[0]`; the published exploit's `PUSHB 54; IDEF` is the shape being matched.
 
@@ -172,7 +199,7 @@ fonts like this can execute arbitrary code on the client.
 ## 4.5 The safe channel (default)
 
 `m2sfix.policy=safe` is the default because it does not depend on the signature at all: every
-`FT_Load_Glyph` gets `FT_LOAD_NO_HINTING`, so `tt_loader_init` never builds an interpreter context and
+`FT_Load_Glyph` gets `FT_LOAD_NO_HINTING | FT_LOAD_NO_AUTOHINT`, so `tt_loader_init` never builds an interpreter context and
 no font program can run. The `IDEF` scan is then only used to decide whether the player gets a warning
 dialog — a wrong scan costs a false alarm, not rendering, and a variant that does not look like `IDEF`
 is still neutralised.
@@ -180,8 +207,9 @@ is still neutralised.
 The price is measured, not guessed (`CompareHinting`, DejaVu Sans at 32 px, first 300 glyphs, hinted
 vs `FT_LOAD_NO_HINTING`): **72.0% of glyph bitmaps differ, mean height difference 0.88 px, mean area
 difference 14.9 px², worst case 2 px.** Small text (Minecraft's HUD) loses more apparent sharpness
-than large text. `m2sfix.policy=detect` restores the old signature-only behaviour for people who
-prefer sharpness.
+than large text. `m2sfix.policy=detect` keeps hinting for fonts that provably cannot execute `SHZ`
+and strips it from the rest — 85 of 792 faces (10.7%) installed on a stock macOS, see
+[DETECT-MODE.md](DETECT-MODE.md).
 
 `block` still refuses flagged faces outright; the safe channel never refuses a glyph, it only
 degrades rendering.
@@ -193,7 +221,7 @@ System properties (`-D...` on the JVM command line):
 | property | default | meaning |
 | --- | --- | --- |
 | `m2sfix.enabled` | `true` | master switch |
-| `m2sfix.policy` | `safe` | `safe` = **every** font loads with `FT_LOAD_NO_HINTING` (no detection needed, whole bug class gone) · `detect`/`hintless` = only flagged fonts · `block` = reject flagged faces · `off` = do nothing |
+| `m2sfix.policy` | `safe` | `safe` = **every** font loads without hinting (no detection needed, whole bug class gone) · `detect`/`hintless` = only `RISKY`/`SUSPICIOUS`/unparsable fonts · `block` = reject `SUSPICIOUS` faces before FreeType parses them, degrade the rest like `detect` · `off` = do nothing |
 | `m2sfix.unparsable` | `hintless` | treatment of fonts the scanner cannot parse (`hintless` / `allow`) |
 | `m2sfix.notify` | `true` | in-game warning dialog |
 | `m2sfix.log` | `true` | one stderr line per flagged font |
@@ -206,13 +234,13 @@ Run on Linux, JDK 26, against LWJGL 3.4.3 — the exact library build and FreeTy
 26.3 bundles.
 
 ```
-mvn test                # 65 tests: 55 core (scanner, policy, guard, notify, variants), 10 agent
+mvn test                # 99 tests (1 skipped off Linux): core scanner/policy/guard/notify/variants + agent
 tools/verify-poc-pack.sh
-java -cp core/target/m2sfix-core-1.0.0.jar dev.duckducktw.m2sfix.core.cli.ScanFonts /usr/share/fonts
+java -cp core/target/m2sfix-core-2.2.0.jar dev.duckducktw.m2sfix.core.cli.ScanFonts /usr/share/fonts
 ```
 
-- **65 tests green.** The agent tests install the real transformer into a running JVM against stub
-  classes with the exact LWJGL descriptors and assert: flagged font `flags 0 → 2`, clean font keeps
+- **98 tests green, 1 skipped** (the `/usr/share/fonts` corpus test, Linux only). The agent tests install the real transformer into a running JVM against stub
+  classes with the exact LWJGL descriptors and assert: flagged font `flags 0 → 0x8002`, clean font keeps
   `flags 0`, the safe channel strips hinting from clean fonts too, `block` rejects the face, `off` changes nothing, null/short buffers and failed face
   creation are ignored. The notify tests build the dialog against Minecraft stand-ins and check both
   buttons, the disconnect callback, the once-per-font rule and the `m2sfix.notify=false` switch. The
@@ -229,12 +257,19 @@ java -cp core/target/m2sfix-core-1.0.0.jar dev.duckducktw.m2sfix.core.cli.ScanFo
   agent also completes, i.e. it does not reproduce the Windows-only ROP chain — the exploit was never
   executed on purpose.
 
-**Not verified:** a live Minecraft 26.3 client on Windows, the dialog on screen, the mod jar inside a
-real Fabric/Forge loader, and the counterfactual ("without the fix it is exploited").
+- **Real clients (2.2.0, macOS ARM64):** Fabric 1.21.10, Forge 1.20.6 and 1.21.10, NeoForge 1.20.5,
+  1.20.6, 1.21.10 and 26.3 with the mod jar; vanilla 1.21.10 and Fabric 1.21.10 with the agent. Each
+  logged the hook-active lines and flagged the synthetic fixture font. Details in
+  [LOADERS.md](LOADERS.md).
+
+**Not verified:** Windows and Linux clients, the exploit itself against a protected client, clicking
+the dialog buttons in a running game, and live `FT_Load_Char` calls.
 
 ## 7. Limits
 
-- Signature-based: it flags `IDEF`. A variant that reaches the same out-of-bounds write without
-  `IDEF` would not be flagged; `m2sfix.policy=block` is the stricter stance.
+- The warning dialog and `block` are signature-based (`IDEF`); a new variant may be neutralised
+  without a warning. `safe` needs no signature, and `detect` keys on `SHZ` reachability, not on `IDEF`.
+- On Forge / NeoForge the mod covers Minecraft's own FreeType calls only; use the agent if other mods
+  call FreeType.
 - The real fix is upstream: FreeType ≥ 2.15.0, i.e. the Minecraft version that picks it up.
-- Untested on macOS/ARM (same FreeType build, same treatment).
+- Live-tested on macOS/ARM only; Windows and Linux use the same Java hooks but were not run live.

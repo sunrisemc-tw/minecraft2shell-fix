@@ -54,7 +54,8 @@ class VariantDetectionTest {
                 "malicious-small-stack.ttf",   // 1-glyph / tiny maxp
                 "nested-composite.ttf",        // IDEF only in a composite glyph program
                 "simple-glyph-idef.ttf",       // IDEF only in a simple glyph program
-                "malicious-idef-shpix.ttf"     // redefines SHPIX instead of SHZ
+                "malicious-idef-shpix.ttf",    // redefines SHPIX instead of SHZ
+                "malicious-idef-multipush.ttf" // PUSHB[1] 0x00, 0x36; IDEF (top of stack is 0x36)
         );
     }
 
@@ -107,9 +108,12 @@ class VariantDetectionTest {
     static Stream<String> benignVariants() {
         return Stream.of(
                 "clean.ttf",                 // plain font
-                "clean-hinting-heavy.ttf",   // FDEF + SHZ + SHPIX + WS, no IDEF
-                "clean-korean-idef.ttf",     // custom instruction definitions, no point-zone opcode
-                "pushb-decoy.ttf"            // 0x89 only inside push payloads
+                "clean-hinting-heavy.ttf",   // FDEF + SHPIX + DELTAP2 + WS, no IDEF/SHZ
+                "clean-korean-idef.ttf",     // custom instruction definitions, no point-zone opcode, no SHZ
+                "clean-idef-multipush.ttf",  // multi-value PUSHB[2] 15, 5, 0x91; IDEF (macOS Skia shape)
+                "pushb-decoy.ttf",           // 0x89 only inside push payloads
+                "no-shz-clean.ttf",          // hinted font with JMPR and no SHZ bytes anywhere
+                "shz-push-payload-only.ttf"  // 0x36/0x37 only inside push payloads, no jump
         );
     }
 
@@ -120,6 +124,64 @@ class VariantDetectionTest {
 
         assertEquals(ScanResult.Verdict.CLEAN, result.verdict(),
                 name + " must not be flagged (false positive): " + result);
+    }
+
+    static Stream<String> riskyShzVariants() {
+        return Stream.of(
+                "shz-in-glyph.ttf",                     // SHZ[0] in glyph program without IDEF
+                "shz1-in-glyph.ttf",                    // SHZ[1] in composite glyph without IDEF
+                "shz-payload-with-jmpr.ttf",            // 0x36 in push payload + JMPR in same stream
+                "shz-in-fpgm.ttf",                      // SHZ only in fpgm (reachable via CALL)
+                "shz-after-uninstructed-composite.ttf", // SHZ in glyph after an uninstructed composite
+                "malformed-glyph-before-shz.ttf",       // malformed glyph 2 followed by SHZ in glyph 3
+                "risky-idef-computed.ttf"               // PUSHB 53; PUSHB 1; ADD; IDEF (unknown opcode)
+        );
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("riskyShzVariants")
+    void riskyShzVariantsAreDegradedInDetectWithoutBlockingOrWarning(String name) throws IOException {
+        byte[] bytes = read(name);
+        ScanResult result = TtfScanner.scan(bytes);
+
+        assertEquals(ScanResult.Verdict.RISKY, result.verdict(),
+                name + " must be RISKY (not CLEAN, not SUSPICIOUS): " + result);
+
+        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
+        client.reset();
+        Notify.resetForTests();
+
+        // detect mode: loses hinting, no warning dialog
+        System.setProperty(FixPolicy.PROP_POLICY, "detect");
+        FaceGuard.clearForTests();
+        long face = 0x6000L + name.hashCode();
+        assertTrue(FaceGuard.inspectNewFace(face, java.nio.ByteBuffer.wrap(bytes), bytes.length),
+                name + " must be degraded in detect mode");
+        assertEquals(0x8002, FaceGuard.adjustLoadFlags(face, 0));
+        assertEquals(null, client.currentScreen, name + " must not show warning dialog");
+
+        // block mode: NOT blocked, still loses hinting, no warning dialog
+        System.setProperty(FixPolicy.PROP_POLICY, "block");
+        FaceGuard.clearForTests();
+        assertEquals(false, FaceGuard.inspectNewFace(face, java.nio.ByteBuffer.wrap(bytes), bytes.length),
+                name + " must not be blocked in block mode");
+        assertEquals(0, FaceGuard.beforeLoadGlyph(face));
+        assertEquals(0x8002, FaceGuard.adjustLoadFlags(face, 0));
+        assertEquals(null, client.currentScreen);
+    }
+
+    @Test
+    void malformedMidGlyphFailsClosedAndDegradesInDetect() throws IOException {
+        byte[] bytes = read("malformed-mid-glyph.ttf");
+        ScanResult result = TtfScanner.scan(bytes);
+
+        assertEquals(ScanResult.Verdict.UNPARSABLE, result.verdict(),
+                "a parse failure mid-glyph-walk must fail closed, never silently CLEAN: " + result);
+
+        System.setProperty(FixPolicy.PROP_POLICY, "detect");
+        FaceGuard.clearForTests();
+        assertTrue(FaceGuard.inspectNewFace(0x6555L, java.nio.ByteBuffer.wrap(bytes), bytes.length));
+        assertEquals(0x8002, FaceGuard.adjustLoadFlags(0x6555L, 0));
     }
 
     /**
@@ -182,8 +244,8 @@ class VariantDetectionTest {
 
         assertTrue(FaceGuard.inspectNewFace(face, java.nio.ByteBuffer.wrap(hostile), hostile.length),
                 "hostile face must be flagged");
-        assertEquals(2, FaceGuard.adjustLoadFlags(face, 0));
-        assertEquals(6, FaceGuard.adjustLoadFlags(face, 4));
+        assertEquals(0x8002, FaceGuard.adjustLoadFlags(face, 0));
+        assertEquals(0x8006, FaceGuard.adjustLoadFlags(face, 4));
     }
 
     @Test
@@ -213,7 +275,7 @@ class VariantDetectionTest {
             boolean flagged = FaceGuard.inspectNewFace(0x5555L, java.nio.ByteBuffer.wrap(padded), padded.length);
 
             assertTrue(flagged, "a font we cannot fully scan must not be treated as clean");
-            assertEquals(2, FaceGuard.adjustLoadFlags(0x5555L, 0));
+            assertEquals(0x8002, FaceGuard.adjustLoadFlags(0x5555L, 0));
         } finally {
             System.clearProperty(FixPolicy.PROP_MAX_SCAN_MIB);
             FixPolicy.reloadForTests();
@@ -230,7 +292,7 @@ class VariantDetectionTest {
 
         FaceGuard.inspectNewFace(0x7777L, java.nio.ByteBuffer.wrap(clean), clean.length);
 
-        assertEquals(2, FaceGuard.adjustLoadFlags(0x7777L, 0),
+        assertEquals(0x8002, FaceGuard.adjustLoadFlags(0x7777L, 0),
                 "safe channel = no font keeps hinting");
     }
 

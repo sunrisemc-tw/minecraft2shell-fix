@@ -37,6 +37,11 @@ public final class FreeType {
         return loadGlyphResult;
     }
 
+    public static int FT_Load_Char(FT_Face face, long character_code, int load_flags) {
+        lastLoadFlags = load_flags;
+        return loadGlyphResult;
+    }
+
     public static void reset() {
         newFaceCalls = 0;
         loadGlyphCalls = 0;

@@ -22,8 +22,8 @@ FontGuard 的做法是：**所有字型載入時都不執行 hinting**。攻擊�
 
 ![hinting comparison](https://raw.githubusercontent.com/sunrisemc-tw/minecraft2shell-fix/main/docs/images/hinting-comparison.png)
 
-如果你覺得小字糊到受不了，可以在 JVM 參數加 `-Dm2sfix.policy=detect`：只處理被判定為惡意的
-字型，其他保持原樣（代價是回到「只擋已知變種」）。
+如果你覺得小字糊到受不了，可以在 JVM 參數加 `-Dm2sfix.policy=detect`：只有可能執行到
+出問題那條指令（SHZ）的字型才關 hinting，其他保持原樣（約 11% 的一般字型也會被降級）。
 
 ### 什麼時候會跳警告
 

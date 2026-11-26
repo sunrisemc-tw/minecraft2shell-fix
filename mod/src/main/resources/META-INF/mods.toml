@@ -1,4 +1,4 @@
-modLoader = "javafml"
+modLoader = "lowcodefml"
 loaderVersion = "[1,)"
 license = "MIT"
 
@@ -12,7 +12,7 @@ authors = "duckducktw"
 [[dependencies.m2sfix]]
 modId = "forge"
 mandatory = true
-versionRange = "[47,)"
+versionRange = "[50,)"
 ordering = "NONE"
 side = "CLIENT"
 

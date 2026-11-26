@@ -13,6 +13,18 @@ final class TestFonts {
     static final String PUSHB_DECOY = "pushb-decoy.ttf";
     static final String NESTED_COMPOSITE = "nested-composite.ttf";
     static final String SIMPLE_GLYPH_IDEF = "simple-glyph-idef.ttf";
+    static final String NO_SHZ_CLEAN = "no-shz-clean.ttf";
+    static final String SHZ_PUSH_PAYLOAD_ONLY = "shz-push-payload-only.ttf";
+    static final String SHZ_IN_GLYPH = "shz-in-glyph.ttf";
+    static final String SHZ1_IN_GLYPH = "shz1-in-glyph.ttf";
+    static final String SHZ_PAYLOAD_WITH_JMPR = "shz-payload-with-jmpr.ttf";
+    static final String SHZ_IN_FPGM = "shz-in-fpgm.ttf";
+    static final String SHZ_AFTER_UNINSTRUCTED_COMPOSITE = "shz-after-uninstructed-composite.ttf";
+    static final String MALICIOUS_IDEF_MULTIPUSH = "malicious-idef-multipush.ttf";
+    static final String CLEAN_IDEF_MULTIPUSH = "clean-idef-multipush.ttf";
+    static final String RISKY_IDEF_COMPUTED = "risky-idef-computed.ttf";
+    static final String MALFORMED_MID_GLYPH = "malformed-mid-glyph.ttf";
+    static final String MALFORMED_GLYPH_BEFORE_SHZ = "malformed-glyph-before-shz.ttf";
 
     private TestFonts() {
     }

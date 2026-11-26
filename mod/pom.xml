@@ -7,7 +7,7 @@
   <parent>
     <groupId>dev.duckducktw.m2sfix</groupId>
     <artifactId>m2sfix-parent</artifactId>
-    <version>1.0.0</version>
+    <version>2.2.0</version>
   </parent>
 
   <artifactId>m2sfix-mod</artifactId>
@@ -32,6 +32,12 @@
       <groupId>org.spongepowered</groupId>
       <artifactId>mixin</artifactId>
       <version>${mixin.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.ow2.asm</groupId>
+      <artifactId>asm-tree</artifactId>
+      <version>${asm.version}</version>
       <scope>provided</scope>
     </dependency>
     <dependency>
@@ -68,9 +74,7 @@
         <artifactId>maven-compiler-plugin</artifactId>
         <configuration>
           <!--
-            Mixin ships an annotation processor that generates a refmap. We target library classes
-            (org.lwjgl...), which are never remapped, so no refmap is needed - and the processor
-            drags gson/guava onto the compile classpath. Turning it off keeps the build honest.
+            Hooks use LWJGL descriptors and stable Minecraft class names, so they need no refmap.
           -->
           <proc>none</proc>
         </configuration>
@@ -82,7 +86,7 @@
         <configuration>
           <archive>
             <manifestEntries>
-              <MixinConfigs>m2sfix.mixins.json</MixinConfigs>
+              <MixinConfigs>m2sfix.forge.mixins.json</MixinConfigs>
             </manifestEntries>
           </archive>
         </configuration>
@@ -113,7 +117,7 @@
               <transformers>
                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                   <manifestEntries>
-                    <MixinConfigs>m2sfix.mixins.json</MixinConfigs>
+                    <MixinConfigs>m2sfix.forge.mixins.json</MixinConfigs>
                   </manifestEntries>
                 </transformer>
               </transformers>

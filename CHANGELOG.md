@@ -1,5 +1,32 @@
 # Changelog
 
+## 2.2.0 — 2026-11-25
+
+**Security hardening (recommended update).** The guard now ORs `FT_LOAD_NO_HINTING |
+FT_LOAD_NO_AUTOHINT` (`0x8002`) instead of `FT_LOAD_NO_HINTING` alone, so FreeType cannot turn
+hinting back on for some faces. Details will be published once upstream has shipped the same fix.
+
+**Forge and NeoForge actually work.** 2.1.0's jar was ignored by NeoForge 1.20.5+ (no
+`neoforge.mods.toml`) and its LWJGL mixin cannot apply on either loader. The mod now rewrites
+Minecraft's own FreeType call sites there and stops startup with a pointer to `-javaagent` if it
+cannot. Live-tested on Fabric 1.21.10, Forge 1.20.6/1.21.10 and NeoForge 1.20.5/1.20.6/1.21.10/26.3
+(macOS). Every hook logs `guard active: … intercepted` the first time it fires.
+
+**Agent on Fabric.** The bridge class is now on the bootstrap class path; previously Fabric's Knot
+refused it, which would have broken font loading. `FT_Load_Char` is hooked too.
+
+**`detect` mode no longer depends on the exploit's signature.** A font keeps hinting only if its
+bytecode provably cannot execute `SHZ`; others become `RISKY` and lose hinting without a dialog. Cost:
+85 of 792 faces on a stock macOS. Details in `docs/DETECT-MODE.md`.
+
+**Scanner fixes.** An uninstructed composite glyph used to stop the glyph walk and skip every later
+glyph; multi-value pushes before `IDEF` hid the defined opcode; `SHZ[1]` (`0x37`) was not counted.
+Mid-walk parse errors now fail closed and the walk continues.
+
+**Other.** `block` rejects a font before FreeType parses it (no leaked face) and still degrades the
+fonts it lets through; the dialog's Continue button now closes it; the face pointer is read at the
+buffer's position. Version numbers in the build now match the changelog. 98 tests (+1 Linux-only).
+
 ## 2.1.0 — 2026-11-24
 
 **Version coverage.** Checked every Minecraft version against Piston meta and the real native

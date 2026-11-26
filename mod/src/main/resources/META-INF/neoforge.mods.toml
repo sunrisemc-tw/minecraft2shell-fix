@@ -1,0 +1,20 @@
+modLoader = "lowcodefml"
+loaderVersion = "[1,)"
+license = "MIT"
+
+[[mods]]
+modId = "m2sfix"
+version = "${project.version}"
+displayName = "minecraft2shell-fix"
+description = "Disables TrueType hinting for Minecraft client fonts."
+authors = "duckducktw"
+
+[[mixins]]
+config = "m2sfix.forge.mixins.json"
+
+[[dependencies.m2sfix]]
+modId = "minecraft"
+type = "required"
+versionRange = "[1.20.5,)"
+ordering = "NONE"
+side = "CLIENT"

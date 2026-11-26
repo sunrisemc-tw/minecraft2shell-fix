@@ -15,9 +15,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * "continue anyway" and "disconnect" — because it already looks like a Minecraft dialog and needs no
  * screen implementation of our own.</p>
  *
- * <p>Failure is always silent: if anything at all goes wrong (unknown Minecraft version, headless
- * run, missing class loader) the warning degrades to a chat message, then to a log line, and never
- * throws into the game.</p>
+ * <p>If the dialog is unavailable, the warning is logged.</p>
  */
 public final class Notify {
 
@@ -62,11 +60,8 @@ public final class Notify {
     /** @return {@code true} when the modal dialog was installed */
     private static boolean showConfirmScreen(String body) {
         try {
-            ClassLoader loader = MinecraftAccess.classLoader();
-            if (loader == null) {
-                return false;
-            }
-            Class<?> minecraft = Class.forName(CLS_MINECRAFT, false, loader);
+            Class<?> minecraft = minecraftClass();
+            ClassLoader loader = minecraft.getClassLoader();
             Object client = minecraft.getMethod("getInstance").invoke(null);
             if (client == null) {
                 return false;
@@ -77,6 +72,9 @@ public final class Notify {
             Class<?> confirm = Class.forName(CLS_CONFIRM, false, loader);
             Class<?> booleanConsumer = Class.forName(CLS_BOOLEAN_CONSUMER, false, loader);
 
+            Method setScreen = findMethod(minecraft, "setScreen", "setScreenAndShow", screen);
+            Method disconnect = findMethod(minecraft, "disconnectWithSavingScreen", "disconnect");
+
             Object title = literal(component, "minecraft2shell-fix");
             Object message = literal(component, body);
             Object yes = literal(component, "我了解，繼續遊玩 / Continue");
@@ -84,20 +82,22 @@ public final class Notify {
 
             Constructor<?> constructor = confirm.getConstructor(
                     booleanConsumer, component, component, component, component);
-            Object dialog = constructor.newInstance(disconnectCallback(minecraft, client, booleanConsumer),
+            Object dialog = constructor.newInstance(screenCallback(client, booleanConsumer, setScreen, disconnect, body),
                     title, message, yes, no);
 
             Runnable show = () -> {
                 try {
-                    minecraft.getMethod("setScreenAndShow", screen).invoke(client, dialog);
+                    setScreen.invoke(client, dialog);
+                    if (FixPolicy.logEnabled()) {
+                        System.err.println("[m2sfix] warning dialog opened");
+                    }
                 } catch (Throwable ignored) {
-                    // Fall through to the log fallback below.
+                    log(body);
                 }
             };
 
             if (SHOWN_FOR_SESSION.compareAndSet(false, true)) {
-                runOnClientThread(minecraft, client, show);
-                return true;
+                minecraft.getMethod("execute", Runnable.class).invoke(client, show);
             }
             return true;
         } catch (Throwable ignored) {
@@ -109,18 +109,18 @@ public final class Notify {
      * Builds the {@code BooleanConsumer} that the confirm screen calls back with: {@code true} for
      * "continue", {@code false} for "disconnect".
      */
-    private static Object disconnectCallback(Class<?> minecraft, Object client, Class<?> booleanConsumer) {
+    private static Object screenCallback(Object client, Class<?> booleanConsumer, Method setScreen,
+            Method disconnect, String body) {
         InvocationHandler handler = (proxy, method, args) -> {
-            if ("accept".equals(method.getName()) && args != null && args.length == 1
-                    && Boolean.FALSE.equals(args[0])) {
+            if ("accept".equals(method.getName()) && args != null && args.length == 1) {
                 try {
-                    minecraft.getMethod("disconnectWithSavingScreen").invoke(client);
-                } catch (Throwable ignored) {
-                    try {
-                        minecraft.getMethod("disconnect").invoke(client);
-                    } catch (Throwable ignoredToo) {
-                        // Nothing else we can do; staying connected is the safe default.
+                    if (Boolean.TRUE.equals(args[0])) {
+                        setScreen.invoke(client, (Object) null);
+                    } else {
+                        disconnect.invoke(client);
                     }
+                } catch (Throwable ignored) {
+                    log(body);
                 }
             }
             return defaultValue(method.getReturnType());
@@ -129,29 +129,16 @@ public final class Notify {
                 new Class<?>[]{booleanConsumer}, handler);
     }
 
-    private static void runOnClientThread(Class<?> minecraft, Object client, Runnable action) {
-        try {
-            Method execute = minecraft.getMethod("execute", Runnable.class);
-            execute.invoke(client, action);
-        } catch (Throwable ignored) {
-            action.run();
-        }
+    private static Object literal(Class<?> component, String value) throws ReflectiveOperationException {
+        return component.getMethod("literal", String.class).invoke(null, value);
     }
 
-    private static Object literal(Class<?> component, String value) {
+    private static Method findMethod(Class<?> owner, String name, String fallback, Class<?>... parameters)
+            throws NoSuchMethodException {
         try {
-            Method literal = component.getMethod("literal", String.class);
-            return literal.invoke(null, value);
-        } catch (Throwable ignored) {
-            // Newer/older naming: try the interface method on MutableComponent.
-            try {
-                Method literal = Class.forName("net.minecraft.network.chat.MutableComponent",
-                                false, component.getClassLoader())
-                        .getMethod("literal", String.class);
-                return literal.invoke(null, value);
-            } catch (Throwable ignoredToo) {
-                return null;
-            }
+            return owner.getMethod(name, parameters);
+        } catch (NoSuchMethodException missing) {
+            return owner.getMethod(fallback, parameters);
         }
     }
 
@@ -179,19 +166,11 @@ public final class Notify {
         return null;
     }
 
-    /** Locates the Minecraft class loader without linking against Minecraft. */
-    private static final class MinecraftAccess {
-
-        private MinecraftAccess() {
-        }
-
-        static ClassLoader classLoader() {
-            try {
-                return Class.forName(CLS_MINECRAFT, false, Notify.class.getClassLoader())
-                        .getClassLoader();
-            } catch (Throwable ignored) {
-                return null;
-            }
+    private static Class<?> minecraftClass() throws ClassNotFoundException {
+        try {
+            return Class.forName(CLS_MINECRAFT, false, Thread.currentThread().getContextClassLoader());
+        } catch (ClassNotFoundException missingFromContext) {
+            return Class.forName(CLS_MINECRAFT, false, Notify.class.getClassLoader());
         }
     }
 }

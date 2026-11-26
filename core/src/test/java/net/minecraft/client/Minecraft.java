@@ -21,6 +21,10 @@ public class Minecraft {
         this.currentScreen = screen;
     }
 
+    public void setScreen(Screen screen) {
+        this.currentScreen = screen;
+    }
+
     public void execute(Runnable task) {
         pending.add(task);
         task.run();

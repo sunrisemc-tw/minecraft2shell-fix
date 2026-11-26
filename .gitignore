@@ -19,3 +19,4 @@ venv/
 # Local Maven repository used when the user-level cache is read-only.
 .m2repo/
 .m2repo/
+.serena/

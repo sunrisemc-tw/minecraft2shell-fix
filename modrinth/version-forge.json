@@ -1,6 +1,6 @@
 {
-  "version_number": "2.1.0",
-  "name": "2.1.0 (Forge / NeoForge)",
+  "version_number": "2.2.0",
+  "name": "2.2.0 (Forge / NeoForge)",
   "release_channel": "release",
   "game_versions": [
     "1.20.5",
@@ -32,8 +32,8 @@
   ],
   "featured": true,
   "dependencies": [],
-  "file": "../mod/target/m2sfix-mod-1.0.0.jar",
-  "changelog": "2.1.0 — 支援 1.20.5 以上（實測各版本內建 FreeType：26.3/26.4 快照 = 2.14.3、26.1–26.2 = 2.14.1、1.20.5–1.21.10 = 2.13.2，全部早於修好的 2.15.0），新增畫質對比圖。\n\n2.0.0 — 預設改走安全通道：所有字型都不執行 hinting，警告只在高信心命中時出現。\n\n1.x — 特徵偵測版本（IDEF 改寫位移指令），PoC 字型 144/144 標記。",
+  "file": "../mod/target/m2sfix-mod-2.2.0.jar",
+  "changelog": "2.2.0 — 修正安全通道可被繞過的問題（同時設定 FT_LOAD_NO_AUTOHINT）；Forge / NeoForge 真正可用（實機測試 Forge 1.20.6/1.21.10、NeoForge 1.20.5–26.3）；detect 模式改為「只要字型可能執行 SHZ 就關 hinting」；修正掃描器多個漏判；警告視窗「繼續」可正常關閉。\n\n2.1.0 — 支援 1.20.5 以上（實測各版本內建 FreeType：26.3/26.4 快照 = 2.14.3、26.1–26.2 = 2.14.1、1.20.5–1.21.10 = 2.13.2，全部早於修好的 2.15.0），新增畫質對比圖。\n\n2.0.0 — 預設改走安全通道：所有字型都不執行 hinting，警告只在高信心命中時出現。\n\n1.x — 特徵偵測版本（IDEF 改寫位移指令），PoC 字型 144/144 標記。",
   "loaders": [
     "forge",
     "neoforge"

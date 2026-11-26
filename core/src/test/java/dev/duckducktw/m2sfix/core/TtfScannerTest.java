@@ -22,7 +22,104 @@ class TtfScannerTest {
         ScanResult result = TtfScanner.scan(TestFonts.read(TestFonts.CLEAN));
 
         assertEquals(ScanResult.Verdict.CLEAN, result.verdict());
-        assertTrue(result.reason().contains("SHZ count=1"), result.reason());
+        assertTrue(result.reason().contains("SHZ count=0"), result.reason());
+    }
+
+    @Test
+    void shzInGlyphWithoutIdefIsRisky() {
+        ScanResult result = TtfScanner.scan(TestFonts.read(TestFonts.SHZ_IN_GLYPH));
+
+        assertEquals(ScanResult.Verdict.RISKY, result.verdict(), result.reason());
+        assertTrue(result.reason().contains("SHZ"), result.reason());
+        assertTrue(result.reason().contains("glyph"), result.reason());
+    }
+
+    @Test
+    void shz1InCompositeGlyphWithoutIdefIsRisky() {
+        ScanResult result = TtfScanner.scan(TestFonts.read(TestFonts.SHZ1_IN_GLYPH));
+
+        assertEquals(ScanResult.Verdict.RISKY, result.verdict(), result.reason());
+        assertTrue(result.reason().contains("SHZ"), result.reason());
+    }
+
+    @Test
+    void shzOnlyInPushPayloadWithoutJumpIsClean() {
+        ScanResult result = TtfScanner.scan(TestFonts.read(TestFonts.SHZ_PUSH_PAYLOAD_ONLY));
+
+        assertEquals(ScanResult.Verdict.CLEAN, result.verdict(), result.reason());
+    }
+
+    @Test
+    void shzInPushPayloadWithJmprInSameStreamIsRisky() {
+        ScanResult result = TtfScanner.scan(TestFonts.read(TestFonts.SHZ_PAYLOAD_WITH_JMPR));
+
+        assertEquals(ScanResult.Verdict.RISKY, result.verdict(), result.reason());
+        assertTrue(result.reason().contains("jump-reachable SHZ"), result.reason());
+    }
+
+    @Test
+    void shzInPushPayloadWithJrotOrJrofInSameStreamIsRisky() {
+        byte[] base = TestFonts.read(TestFonts.SHZ_PAYLOAD_WITH_JMPR);
+        // Replace JMPR (0x1C) with JROT (0x78) and JROF (0x79) in fpgm.
+        byte[] withJrot = TestFonts.patchTable(base, "fpgm", new byte[]{(byte) 0xB0, 0x02, 0x78, (byte) 0xB1, 0x36, 0x00});
+        byte[] withJrof = TestFonts.patchTable(base, "fpgm", new byte[]{(byte) 0xB0, 0x02, 0x79, (byte) 0xB1, 0x37, 0x00});
+
+        assertEquals(ScanResult.Verdict.RISKY, TtfScanner.scan(withJrot).verdict());
+        assertEquals(ScanResult.Verdict.RISKY, TtfScanner.scan(withJrof).verdict());
+    }
+
+    @Test
+    void shzInNpushbCountByteWithJmprIsRisky() {
+        byte[] base = TestFonts.read(TestFonts.SHZ_PAYLOAD_WITH_JMPR);
+        // PUSHB 2; JMPR; NPUSHB; 0x36 (count byte = 54, truncated payload); 0x00 -> jump can land on 0x36.
+        byte[] font = TestFonts.patchTable(base, "fpgm", new byte[]{(byte) 0xB0, 0x02, 0x1C, 0x40, 0x36, 0x00});
+
+        assertEquals(ScanResult.Verdict.RISKY, TtfScanner.scan(font).verdict());
+    }
+
+    @Test
+    void jumpInOneStreamDoesNotTaintPushPayloadInAnotherStream() {
+        // shz-push-payload-only.ttf has 0x36/0x37 in prep/glyph push payloads and 3-byte fpgm;
+        // replacing fpgm with PUSHB 1; JMPR (no 0x36/0x37 in fpgm) must stay CLEAN.
+        byte[] font = TestFonts.patchTable(
+                TestFonts.read(TestFonts.SHZ_PUSH_PAYLOAD_ONLY), "fpgm", new byte[]{(byte) 0xB0, 0x01, 0x1C});
+
+        ScanResult result = TtfScanner.scan(font);
+        assertEquals(ScanResult.Verdict.CLEAN, result.verdict(), result.reason());
+    }
+
+    @Test
+    void shzOnlyInFpgmReachableViaCallIsRisky() {
+        ScanResult result = TtfScanner.scan(TestFonts.read(TestFonts.SHZ_IN_FPGM));
+
+        assertEquals(ScanResult.Verdict.RISKY, result.verdict(), result.reason());
+        assertTrue(result.reason().contains("fpgm"), result.reason());
+    }
+
+    @Test
+    void noShzAtAllIsClean() {
+        ScanResult result = TtfScanner.scan(TestFonts.read(TestFonts.NO_SHZ_CLEAN));
+
+        assertEquals(ScanResult.Verdict.CLEAN, result.verdict(), result.reason());
+    }
+
+    @Test
+    void shzAfterUninstructedCompositeIsNotSkipped() {
+        ScanResult result = TtfScanner.scan(TestFonts.read(TestFonts.SHZ_AFTER_UNINSTRUCTED_COMPOSITE));
+
+        assertEquals(ScanResult.Verdict.RISKY, result.verdict(), result.reason());
+        assertTrue(result.reason().contains("glyph 4"), result.reason());
+    }
+
+    @Test
+    void collectionWithRiskySecondFaceIsRisky() {
+        byte[] clean = TestFonts.read(TestFonts.CLEAN);
+        byte[] risky = TestFonts.read(TestFonts.SHZ_IN_GLYPH);
+
+        ScanResult result = TtfScanner.scan(TestFonts.collection(clean, risky));
+
+        assertEquals(ScanResult.Verdict.RISKY, result.verdict(), result.reason());
+        assertTrue(result.reason().contains("face 1"), result.reason());
     }
 
     @Test
@@ -59,13 +156,44 @@ class TtfScannerTest {
     }
 
     @Test
-    void fdefOperandIsNotAnOpcode() {
+    void fdefDoesNotTreatNextByteAsInlineOperand() {
+        // FDEF (0x2C) pops its function number from the stack (not inline), so a following 0x89 is
+        // decoded as an IDEF with a statically unknown opcode and degrades to RISKY (not CLEAN).
         byte[] font = TestFonts.patchTable(
                 TestFonts.read(TestFonts.CLEAN), "fpgm", new byte[]{0x2C, (byte) 0x89});
 
         ScanResult result = TtfScanner.scan(font);
 
-        assertEquals(ScanResult.Verdict.CLEAN, result.verdict(), result.reason());
+        assertEquals(ScanResult.Verdict.RISKY, result.verdict(), result.reason());
+        assertTrue(result.reason().contains("unknown opcode"), result.reason());
+    }
+
+    @Test
+    void multiValuePushBeforeIdefUsesTopOfStack() {
+        ScanResult hostile = TtfScanner.scan(TestFonts.read(TestFonts.MALICIOUS_IDEF_MULTIPUSH));
+        assertEquals(ScanResult.Verdict.SUSPICIOUS, hostile.verdict(), hostile.reason());
+        assertTrue(hostile.reason().contains("0x36"), hostile.reason());
+
+        ScanResult benign = TtfScanner.scan(TestFonts.read(TestFonts.CLEAN_IDEF_MULTIPUSH));
+        assertEquals(ScanResult.Verdict.CLEAN, benign.verdict(), benign.reason());
+        assertTrue(benign.reason().contains("0x91"), benign.reason());
+    }
+
+    @Test
+    void computedIdefOpcodeIsRiskyNotClean() {
+        ScanResult result = TtfScanner.scan(TestFonts.read(TestFonts.RISKY_IDEF_COMPUTED));
+
+        assertEquals(ScanResult.Verdict.RISKY, result.verdict(), result.reason());
+        assertTrue(result.reason().contains("unknown opcode"), result.reason());
+    }
+
+    @Test
+    void malformedGlyphMidWalkFailsClosedAndContinuesScanning() {
+        ScanResult failedClosed = TtfScanner.scan(TestFonts.read(TestFonts.MALFORMED_MID_GLYPH));
+        assertEquals(ScanResult.Verdict.UNPARSABLE, failedClosed.verdict(), failedClosed.reason());
+
+        ScanResult continuedToShz = TtfScanner.scan(TestFonts.read(TestFonts.MALFORMED_GLYPH_BEFORE_SHZ));
+        assertEquals(ScanResult.Verdict.RISKY, continuedToShz.verdict(), continuedToShz.reason());
     }
 
     @Test

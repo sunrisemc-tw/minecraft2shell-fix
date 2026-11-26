@@ -61,7 +61,7 @@ class AgentIntegrationTest {
 
         assertEquals(0, result);
         assertEquals(1, FreeType.loadGlyphCalls);
-        assertEquals(2, FreeType.lastLoadFlags);
+        assertEquals(0x8002, FreeType.lastLoadFlags);
         assertEquals(FACE_ADDRESS, FreeType.lastFaceAddress);
     }
 
@@ -81,7 +81,7 @@ class AgentIntegrationTest {
 
         FreeType.FT_Load_Glyph(new FT_Face(FACE_ADDRESS), 0, 0x4);
 
-        assertEquals(0x6, FreeType.lastLoadFlags);
+        assertEquals(0x8006, FreeType.lastLoadFlags);
     }
 
     @Test
@@ -92,7 +92,7 @@ class AgentIntegrationTest {
         int newFace = FreeType.FT_New_Memory_Face(
                 0L, ByteBuffer.wrap(malicious), malicious.length, new PointerBuffer(FACE_ADDRESS));
 
-        assertEquals(1, FreeType.newFaceCalls);
+        assertEquals(0, FreeType.newFaceCalls);
         assertEquals(FaceGuard.FT_ERR_INVALID_FILE_FORMAT, newFace);
     }
 
@@ -105,6 +105,25 @@ class AgentIntegrationTest {
                 0L, ByteBuffer.wrap(clean), clean.length, new PointerBuffer(FACE_ADDRESS));
 
         assertEquals(0, newFace);
+        assertEquals(1, FreeType.newFaceCalls);
+    }
+
+    @Test
+    void recordsTheAddressAtTheOutputPointersPosition() {
+        PointerBuffer pointers = new PointerBuffer(1L, FACE_ADDRESS).position(1);
+        assertEquals(0, FreeType.FT_New_Memory_Face(0, ByteBuffer.wrap(malicious), 0, pointers));
+
+        FreeType.FT_Load_Glyph(new FT_Face(FACE_ADDRESS), 0, 0);
+        assertEquals(0x8002, FreeType.lastLoadFlags);
+    }
+
+    @Test
+    void characterLoadsUseTheSamePolicyAsGlyphLoads() {
+        callNewFace(malicious, FACE_ADDRESS);
+
+        FreeType.FT_Load_Char(new FT_Face(FACE_ADDRESS), 'A', 4);
+
+        assertEquals(0x8006, FreeType.lastLoadFlags);
     }
 
     @Test
@@ -117,7 +136,7 @@ class AgentIntegrationTest {
         assertEquals(0, newFace);
         FreeType.FT_Load_Glyph(new FT_Face(FACE_ADDRESS), 0, 0);
 
-        assertEquals(0x2, FreeType.lastLoadFlags,
+        assertEquals(0x8002, FreeType.lastLoadFlags,
                 "with the safe channel even a clean font must be loaded without hinting");
     }
 

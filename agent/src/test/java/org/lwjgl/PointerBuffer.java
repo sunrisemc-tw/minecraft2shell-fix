@@ -4,6 +4,7 @@ package org.lwjgl;
 public final class PointerBuffer {
 
     private final long[] values;
+    private int position;
 
     public PointerBuffer(long... values) {
         this.values = values.clone();
@@ -11,5 +12,14 @@ public final class PointerBuffer {
 
     public long get(int index) {
         return values[index];
+    }
+
+    public int position() {
+        return position;
+    }
+
+    public PointerBuffer position(int index) {
+        position = index;
+        return this;
     }
 }
