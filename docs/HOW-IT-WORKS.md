@@ -275,12 +275,12 @@ Run on Linux, JDK 26, against LWJGL 3.4.3 — the exact library build and FreeTy
 26.3 bundles.
 
 ```
-mvn test                # 99 tests (1 skipped off Linux): core scanner/policy/guard/notify/variants + agent
+mvn test                # 111 tests (1 skipped off Linux): core scanner/policy/guard/notify/variants/images + agent
 tools/verify-poc-pack.sh
 java -cp core/target/m2sfix-core-2.2.0.jar dev.duckducktw.m2sfix.core.cli.ScanFonts /usr/share/fonts
 ```
 
-- **98 tests green, 1 skipped** (the `/usr/share/fonts` corpus test, Linux only). The agent tests install the real transformer into a running JVM against stub
+- **111 tests green, 1 skipped** (the `/usr/share/fonts` corpus test, Linux only). The agent tests install the real transformer into a running JVM against stub
   classes with the exact LWJGL descriptors and assert: flagged font `flags 0 → 0x8002`, clean font keeps
   `flags 0`, the safe channel strips hinting from clean fonts too, `block` rejects the face, `off` changes nothing, null/short buffers and failed face
   creation are ignored. The notify tests build the dialog against Minecraft stand-ins and check both

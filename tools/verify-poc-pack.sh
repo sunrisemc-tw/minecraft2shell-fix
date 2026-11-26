@@ -9,7 +9,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
-core_jar="$root/core/target/m2sfix-core-2.2.0.jar"
+core_jar="$root/core/target/m2sfix-core-2.3.0.jar"
 pack_url="https://raw.githubusercontent.com/bikini/minecraft2shell/main/resource-pack.zip"
 work="${TMPDIR:-/tmp}/m2sfix-poc-pack"
 
