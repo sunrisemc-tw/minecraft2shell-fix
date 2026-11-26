@@ -100,6 +100,42 @@ Reading that:
 - The loop **still had 4 GiB to write**. That number is not incidental: the wrap only happens when the
   true size is ≥ 2³², so *every* triggering image writes at least 4 GiB.
 
+## 4.5 Auditing the other decoders (looking for a completable overflow)
+
+The conclusion in §5 rests on the write being ≥ 2³² bytes, i.e. impossible to finish. It would fall
+apart if some *other* path produced the opposite asymmetry — a small allocation with a **moderate**
+write — so that the loop could complete and return control to the program with a corrupted heap. That
+was audited instead of assumed.
+
+**Static pass** over `stb_image.h` (allocation sites vs. the loops that fill them). The dangerous shape
+is an unchecked 32-bit product used for the allocation while the write bound uses the true value, or a
+per-pixel index (`y*w + x`) that can wrap. Master already routes most allocations through
+`stbi__malloc_mad3/mad4`, and the two remaining raw multiplies (`stbi__convert_16_to_8`,
+`stbi__convert_8_to_16`) are guarded and use the *same* value for allocation and loop, so they cannot
+diverge.
+
+**Dynamic pass** against the actual native Minecraft ships (`liblwjgl_stb.so` from
+`lwjgl-stb:3.4.3`), so the result reflects LWJGL's vendored copy rather than upstream:
+
+| format | crafted with dims | result |
+| --- | --- | --- |
+| PNG 8-bit | 32768², 46341², 65535² | `Image too large to decode` |
+| PNM P5/P6 16-bit | same | `PNM too large` |
+| GIF | same | `GIF image is too large` |
+| HDR | same | `HDR image is too large` |
+| TGA (raw + RLE) | same | `Corrupt TGA` |
+| BMP | same | `Corrupt BMP` |
+| PSD | same | refused before allocation |
+| **16-bit PNG → 4 components** | 23171² | **SIGSEGV** (the known bug) |
+
+63 malformed files across eight formats and seven dimension sets: exactly one crash, the already-known
+`stbi__convert_format16` case. Every other decoder validates its geometry and refuses cleanly, i.e. the
+vendored copy is current enough to have those guards.
+
+So the asymmetry needed for a completable overflow was not found. That is a negative result, not a
+proof of absence — it covers the shapes above and the formats listed, not every code path in 7 800
+lines.
+
 ## 5. Why this does not become RCE
 
 An exploit needs the corrupted memory to be *consumed* by code that then runs. Here:
