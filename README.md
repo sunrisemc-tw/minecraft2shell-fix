@@ -7,7 +7,7 @@
 
 幫你的 Minecraft 擋掉「伺服器資源包字型」攻擊 —— 代價是小字稍微變柔（見下方對照圖）。
 
-> ⚠️ 已在 macOS 上的真實遊戲客戶端（Fabric、Forge、NeoForge、原版＋`-javaagent`）確認掛鉤有生效，
+> ⚠️ 已在 Linux 上的真實遊戲客戶端（Fabric、Forge、NeoForge、原版＋`-javaagent`）確認掛鉤有生效，
 > 但**沒有在 Windows 上實際跑過攻擊程式**。請當成「先擋一下」的過渡方案，不是官方修補。
 
 ### 免責聲明
@@ -184,7 +184,7 @@ MIT。自由使用、修改、再散布。
 A client-side mitigation for the Minecraft "server resource pack font" attack. The price is slightly
 softer small text (see the comparison below).
 
-> ⚠️ The hooks were confirmed working in real game clients on macOS (Fabric, Forge, NeoForge, and
+> ⚠️ The hooks were confirmed working in real game clients on Linux (Fabric, Forge, NeoForge, and
 > vanilla with `-javaagent`), but **the exploit itself was never run against it on Windows**. Treat it
 > as a stopgap, not a vendor fix.
 
